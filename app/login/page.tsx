@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,35 +19,6 @@ export default function LoginPage() {
     username: "",
     password: "",
   })
-  const [debugInfo, setDebugInfo] = useState<any>({})
-
-  // Función para actualizar información de depuración
-  useEffect(() => {
-    const updateDebugInfo = () => {
-      const info = {
-        localStorage: {
-          accessToken: localStorage.getItem("accessToken") ? "Presente" : "No presente",
-          refreshToken: localStorage.getItem("refreshToken") ? "Presente" : "No presente",
-          userData: localStorage.getItem("userData"),
-        },
-        auth: {
-          isLoading,
-          error,
-        },
-        navigator: {
-          userAgent: navigator.userAgent,
-          platform: navigator.platform,
-        },
-      }
-      setDebugInfo(info)
-      console.log("🔍 Información de depuración:", info)
-    }
-
-    updateDebugInfo()
-    // Actualizar cada segundo para ver cambios
-    const interval = setInterval(updateDebugInfo, 1000)
-    return () => clearInterval(interval)
-  }, [isLoading, error])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { id, value } = e.target
@@ -56,13 +27,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log("📝 Formulario enviado:", { ...formData, password: "***" })
-
-    try {
-      await login(formData)
-    } catch (err) {
-      console.error("❌ Error al iniciar sesión:", err)
-    }
+    await login(formData)
   }
 
   return (
@@ -116,16 +81,6 @@ export default function LoginPage() {
                   ¿Olvidaste tu contraseña?
                 </Link>
               </div>
-            </div>
-
-            {/* Información de depuración */}
-            <div className="mt-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-md text-xs">
-              <details>
-                <summary className="cursor-pointer font-medium">Información de depuración</summary>
-                <pre className="mt-2 whitespace-pre-wrap overflow-auto max-h-40">
-                  {JSON.stringify(debugInfo, null, 2)}
-                </pre>
-              </details>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">

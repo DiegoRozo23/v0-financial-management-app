@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowUpRight, LineChart, Plus, TrendingUp, Edit, Trash2, Download, PiggyBank } from "lucide-react"
+import { ArrowUpRight, LineChart, Plus, TrendingUp, Edit, Trash2, Download, PiggyBank, Loader2 } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -44,47 +44,69 @@ export default function AhorrosPage() {
   const [ahorroActual, setAhorroActual] = useState<Ahorro | null>(null)
   const [formData, setFormData] = useState({
     nombre: "",
-    tipo: "",
     monto: "",
     descripcion: "",
     fecha: new Date().toISOString().split("T")[0],
+    fecha_Final: "",
   })
   const [isLoading, setIsLoading] = useState(false)
-  const [isLoadingData, setIsLoadingData] = useState(true)
+  const [isFetching, setIsFetching] = useState(true)
   const [exportLoading, setExportLoading] = useState(false)
   const [exportFormat, setExportFormat] = useState<"excel" | "pdf" | "csv">("excel")
   const [showExportOptions, setShowExportOptions] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Tipos de ahorro predefinidos
-  const tiposAhorro = ["Emergencia", "Ocio", "Compras grandes", "Educación", "Hogar", "Jubilación", "Otros"]
-
-  // Cargar datos
+  // Cargar datos al montar el componente
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoadingData(true)
+    const fetchAhorros = async () => {
+      setIsFetching(true)
       setError(null)
+
       try {
-        const data = await apiService.getAhorros()
-        setAhorros(data)
+        const ahorrosData = await apiService.getAhorros()
+        setAhorros(ahorrosData)
       } catch (err) {
         console.error("Error al cargar ahorros:", err)
-        setError("Error al cargar los ahorros. Por favor, intenta de nuevo más tarde.")
+        setError("No se pudieron cargar los ahorros. Intente nuevamente más tarde.")
       } finally {
-        setIsLoadingData(false)
+        setIsFetching(false)
       }
     }
 
-    fetchData()
+    fetchAhorros()
   }, [])
+
+  const tiposAhorro = ["Emergencia", "Ocio", "Compras grandes", "Educación", "Hogar", "Jubilación", "Otros"]
 
   const totalAhorros = ahorros.reduce((sum, ahorro) => sum + ahorro.monto, 0)
 
-  // Filtrar ahorros según la pestaña activa
+  // Calculamos el ahorro mensual basado en los ahorros del último mes
+  const hoy = new Date()
+  const unMesAtras = new Date(hoy.getFullYear(), hoy.getMonth() - 1, hoy.getDate()).toISOString().split("T")[0]
+  const ahorroMensual = ahorros
+    .filter((ahorro) => new Date(ahorro.fecha) >= new Date(unMesAtras))
+    .reduce((sum, ahorro) => sum + ahorro.monto, 0)
+
   const filteredAhorros = ahorros.filter((ahorro) => {
     if (activeTab === "todos") return true
-    return ahorro.tipo.toLowerCase() === activeTab.toLowerCase()
+
+    // Filtramos por descripción, ya que el API no tiene un campo de tipo
+    return ahorro.descripcion.toLowerCase().includes(activeTab.toLowerCase())
   })
+
+  // Datos para gráficos
+  const distribucionData = tiposAhorro
+    .map((tipo) => {
+      const montoTotal = ahorros
+        .filter((ahorro) => ahorro.descripcion.toLowerCase().includes(tipo.toLowerCase()))
+        .reduce((sum, ahorro) => sum + ahorro.monto, 0)
+
+      return {
+        name: tipo,
+        value: montoTotal,
+      }
+    })
+    .filter((item) => item.value > 0)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target
@@ -93,16 +115,17 @@ export default function AhorrosPage() {
   }
 
   const handleSelectChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, tipo: value }))
+    // Como el API no tiene un campo tipo, lo guardamos en descripción
+    setFormData((prev) => ({ ...prev, descripcion: `${value}: ${prev.descripcion}` }))
   }
 
   const resetForm = () => {
     setFormData({
       nombre: "",
-      tipo: "",
       monto: "",
       descripcion: "",
       fecha: new Date().toISOString().split("T")[0],
+      fecha_Final: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
     })
     setAhorroActual(null)
   }
@@ -112,7 +135,7 @@ export default function AhorrosPage() {
     setError(null)
 
     // Validación básica
-    if (!formData.nombre || !formData.tipo || !formData.monto || !formData.fecha) {
+    if (!formData.nombre || !formData.monto || !formData.fecha) {
       toast({
         title: "Error",
         description: "Por favor completa todos los campos obligatorios",
@@ -123,28 +146,24 @@ export default function AhorrosPage() {
     }
 
     try {
-      // Asegurarse de que el monto sea un número
-      const montoNumerico = Number.parseFloat(formData.monto)
-
-      // Crear objeto con la estructura correcta según la API
-      const ahorroData: Ahorro = {
+      const ahorroData = {
         nombre: formData.nombre,
-        tipo: formData.tipo,
-        monto: montoNumerico,
+        monto: Number.parseFloat(formData.monto),
+        descripcion: formData.descripcion || "Ahorro",
         fecha: formData.fecha,
-      }
-
-      // Solo incluir descripción si existe
-      if (formData.descripcion) {
-        ahorroData.descripcion = formData.descripcion
+        fecha_Final:
+          formData.fecha_Final ||
+          new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
       }
 
       if (ahorroActual) {
         // Actualizar ahorro existente
-        const updatedAhorro = await apiService.updateAhorro(ahorroActual.id!, ahorroData)
+        const updatedAhorro = await apiService.updateAhorro(ahorroActual.id || 0, ahorroData)
 
         // Actualizar estado local
-        setAhorros((prev) => prev.map((ahorro) => (ahorro.id === ahorroActual.id ? updatedAhorro : ahorro)))
+        const updatedAhorros = ahorros.map((ahorro) => (ahorro.id === ahorroActual.id ? updatedAhorro : ahorro))
+
+        setAhorros(updatedAhorros)
 
         toast({
           title: "Ahorro actualizado",
@@ -153,27 +172,24 @@ export default function AhorrosPage() {
       } else {
         // Crear nuevo ahorro
         const newAhorro = await apiService.createAhorro(ahorroData)
-
-        // Actualizar estado local
-        setAhorros((prev) => [...prev, newAhorro])
+        setAhorros([...ahorros, newAhorro])
 
         toast({
           title: "Ahorro creado",
           description: `Se ha registrado "${formData.nombre}" correctamente.`,
         })
       }
-
-      setOpenDialog(false)
-      resetForm()
     } catch (err) {
       console.error("Error al guardar ahorro:", err)
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Ocurrió un error al guardar el ahorro. Inténtalo de nuevo.",
+        description: "No se pudo guardar el ahorro. Intente nuevamente.",
         variant: "destructive",
       })
     } finally {
       setIsLoading(false)
+      setOpenDialog(false)
+      resetForm()
     }
   }
 
@@ -181,15 +197,16 @@ export default function AhorrosPage() {
     setAhorroActual(ahorro)
     setFormData({
       nombre: ahorro.nombre,
-      tipo: ahorro.tipo,
       monto: ahorro.monto.toString(),
-      descripcion: ahorro.descripcion || "",
+      descripcion: ahorro.descripcion,
       fecha: ahorro.fecha,
+      fecha_Final: ahorro.fecha_Final,
     })
     setOpenDialog(true)
   }
 
   const handleDelete = async (id: number) => {
+    setIsLoading(true)
     try {
       await apiService.deleteAhorro(id)
 
@@ -204,9 +221,11 @@ export default function AhorrosPage() {
       console.error("Error al eliminar ahorro:", err)
       toast({
         title: "Error",
-        description: "Ocurrió un error al eliminar el ahorro. Inténtalo de nuevo.",
+        description: "No se pudo eliminar el ahorro. Intente nuevamente.",
         variant: "destructive",
       })
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -222,9 +241,10 @@ export default function AhorrosPage() {
     setTimeout(() => {
       const dataToExport = filteredAhorros.map((ahorro) => ({
         Nombre: ahorro.nombre,
-        Tipo: ahorro.tipo,
+        Tipo: "Ahorro",
         "Fecha Inicio": formatDate(ahorro.fecha),
-        "Monto Actual": `$${ahorro.monto.toLocaleString()}`,
+        "Fecha Fin": formatDate(ahorro.fecha_Final),
+        Monto: `$${ahorro.monto.toLocaleString()}`,
         Descripción: ahorro.descripcion || "",
       }))
 
@@ -251,35 +271,17 @@ export default function AhorrosPage() {
     }, 1000)
   }
 
-  // Datos para el gráfico de distribución
-  const distribucionData = tiposAhorro
-    .map((tipo) => {
-      const montoTotal = ahorros.filter((ahorro) => ahorro.tipo === tipo).reduce((sum, ahorro) => sum + ahorro.monto, 0)
-
-      return {
-        name: tipo,
-        value: montoTotal,
-      }
-    })
-    .filter((item) => item.value > 0)
-
-  if (isLoadingData) {
+  if (isFetching) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Cargando ahorros...</p>
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Ahorros</h1>
+            <p className="text-muted-foreground">Cargando datos...</p>
+          </div>
         </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
-          <Button onClick={() => window.location.reload()}>Reintentar</Button>
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-12 w-12 animate-spin text-green-600" />
         </div>
       </div>
     )
@@ -320,7 +322,7 @@ export default function AhorrosPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="tipo-ahorro">Tipo</Label>
-                  <Select value={formData.tipo} onValueChange={handleSelectChange}>
+                  <Select onValueChange={handleSelectChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecciona un tipo" />
                     </SelectTrigger>
@@ -356,6 +358,15 @@ export default function AhorrosPage() {
                   <Label htmlFor="fecha-ahorro">Fecha de Inicio</Label>
                   <Input id="fecha-ahorro" type="date" value={formData.fecha} onChange={handleInputChange} />
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="fecha_Final-ahorro">Fecha Final</Label>
+                  <Input
+                    id="fecha_Final-ahorro"
+                    type="date"
+                    value={formData.fecha_Final}
+                    onChange={handleInputChange}
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -384,7 +395,19 @@ export default function AhorrosPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">${totalAhorros.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">Suma de todos tus ahorros</div>
+            <div className="text-xs text-muted-foreground">{ahorros.length} ahorros registrados</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ahorro Mensual</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">${ahorroMensual.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground">
+              {ahorroMensual > 0 ? "Buen trabajo ahorrando este mes" : "No has ahorrado este mes"}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -414,30 +437,56 @@ export default function AhorrosPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{ahorros.length}</div>
-            <div className="text-xs text-muted-foreground">
-              En {ahorros.length > 0 ? new Set(ahorros.map((ahorro) => ahorro.tipo)).size : 0} categorías diferentes
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Último Ahorro</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {ahorros.length > 0
-                ? ahorros.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0].nombre
-                : "N/A"}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {ahorros.length > 0
-                ? formatDate(ahorros.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0].fecha)
-                : "Sin datos"}
-            </div>
+            <div className="text-xs text-muted-foreground">Planificando tu futuro financiero</div>
           </CardContent>
         </Card>
       </div>
+
+      {error && (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()}>Reintentar</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!error && ahorros.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Evolución de Ahorros</CardTitle>
+            <CardDescription>Visualiza el crecimiento de tus ahorros en el tiempo</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={ahorros.map((ahorro) => ({
+                    name: ahorro.nombre,
+                    monto: ahorro.monto,
+                  }))}
+                  margin={{
+                    top: 20,
+                    right: 30,
+                    left: 20,
+                    bottom: 5,
+                  }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip
+                    formatter={(value: number) => [`$${value.toLocaleString()}`, "Monto"]}
+                    labelFormatter={(label) => `Ahorro: ${label}`}
+                  />
+                  <Legend />
+                  <Bar dataKey="monto" name="Monto Ahorrado" fill="#82ca9d" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="todos" value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
@@ -455,70 +504,77 @@ export default function AhorrosPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Fecha</TableHead>
-                    <TableHead>Monto</TableHead>
-                    <TableHead>Descripción</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAhorros.length === 0 ? (
+              {isLoading ? (
+                <div className="flex justify-center items-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Cargando ahorros...</span>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        No se encontraron ahorros
-                      </TableCell>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Fecha Inicio</TableHead>
+                      <TableHead>Fecha Final</TableHead>
+                      <TableHead>Monto</TableHead>
+                      <TableHead>Descripción</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
-                  ) : (
-                    filteredAhorros.map((ahorro) => (
-                      <TableRow key={ahorro.id}>
-                        <TableCell className="font-medium">{ahorro.nombre}</TableCell>
-                        <TableCell>{ahorro.tipo}</TableCell>
-                        <TableCell>{formatDate(ahorro.fecha)}</TableCell>
-                        <TableCell>${ahorro.monto.toLocaleString()}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{ahorro.descripcion || "-"}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => handleEdit(ahorro)}>
-                              <Edit className="h-4 w-4" />
-                              <span className="sr-only">Editar</span>
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
-                                  <Trash2 className="h-4 w-4" />
-                                  <span className="sr-only">Eliminar</span>
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Esta acción no se puede deshacer. Esto eliminará permanentemente el ahorro.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-red-600 hover:bg-red-700"
-                                    onClick={() => handleDelete(ahorro.id!)}
-                                  >
-                                    Eliminar
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredAhorros.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No se encontraron ahorros
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : (
+                      filteredAhorros.map((ahorro) => (
+                        <TableRow key={ahorro.id}>
+                          <TableCell className="font-medium">{ahorro.nombre}</TableCell>
+                          <TableCell>{formatDate(ahorro.fecha)}</TableCell>
+                          <TableCell>{formatDate(ahorro.fecha_Final)}</TableCell>
+                          <TableCell>${ahorro.monto.toLocaleString()}</TableCell>
+                          <TableCell className="max-w-[200px] truncate">{ahorro.descripcion || "-"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => handleEdit(ahorro)}>
+                                <Edit className="h-4 w-4" />
+                                <span className="sr-only">Editar</span>
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
+                                    <Trash2 className="h-4 w-4" />
+                                    <span className="sr-only">Eliminar</span>
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Esta acción no se puede deshacer. Esto eliminará permanentemente el ahorro.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-red-600 hover:bg-red-700"
+                                      onClick={() => handleDelete(ahorro.id || 0)}
+                                    >
+                                      Eliminar
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
             <CardFooter className="flex justify-between">
               <div className="relative">
@@ -564,7 +620,7 @@ export default function AhorrosPage() {
             </CardFooter>
           </Card>
 
-          {filteredAhorros.length > 0 && (
+          {filteredAhorros.length > 0 && !error && (
             <Card>
               <CardHeader>
                 <CardTitle>Distribución de Ahorros</CardTitle>

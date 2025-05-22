@@ -1,11 +1,15 @@
 // Constantes
 const API_URL = "https://finanzasapi-c7or.onrender.com"
+import Cookies from "js-cookie"
 
 // Tipos
 export interface AuthResponse {
   access?: string
   refresh?: string
   message?: string
+  user?: {
+    username: string
+  }
 }
 
 export interface LoginCredentials {
@@ -20,22 +24,12 @@ export interface RegisterCredentials {
 
 export interface UserData {
   username: string
-  id?: number
-}
-
-// Función para mostrar logs en consola con formato
-const logRequest = (title: string, data: any) => {
-  console.group(`🌐 ${title}`)
-  console.log(data)
-  console.groupEnd()
 }
 
 // Servicio de autenticación
 export const authService = {
   // Registrar un nuevo usuario
   async register(credentials: RegisterCredentials): Promise<AuthResponse> {
-    logRequest("REGISTRO - Datos enviados", { ...credentials, password: "***" })
-
     try {
       const response = await fetch(`${API_URL}/api/register/`, {
         method: "POST",
@@ -45,30 +39,21 @@ export const authService = {
         body: JSON.stringify(credentials),
       })
 
-      const responseData = await response.json()
-
-      logRequest("REGISTRO - Respuesta", {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-        data: responseData,
-      })
+      const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(responseData.message || "Error al registrar usuario")
+        throw new Error(data.message || "Error al registrar usuario")
       }
 
-      return responseData
+      return data
     } catch (error) {
-      console.error("❌ Error en el registro:", error)
+      console.error("Error en el registro:", error)
       throw error
     }
   },
 
   // Iniciar sesión
-  async login(credentials: LoginCredentials): Promise<UserData> {
-    logRequest("LOGIN - Datos enviados", { ...credentials, password: "***" })
-
+  async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
       const response = await fetch(`${API_URL}/api/login/`, {
         method: "POST",
@@ -78,51 +63,38 @@ export const authService = {
         body: JSON.stringify(credentials),
       })
 
-      const responseData = await response.json()
-
-      logRequest("LOGIN - Respuesta", {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-        data: responseData,
-      })
+      const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(responseData.detail || "Error al iniciar sesión")
+        throw new Error(data.detail || "Error al iniciar sesión")
       }
 
-      // Guardar tokens en localStorage
-      if (responseData.access) {
-        localStorage.setItem("accessToken", responseData.access)
-        console.log("✅ Token de acceso guardado en localStorage")
+      // Guardar tokens en cookies
+      if (data.access) {
+        Cookies.set("accessToken", data.access, { expires: 1 }) // Expira en 1 día
+      }
+      if (data.refresh) {
+        Cookies.set("refreshToken", data.refresh, { expires: 7 }) // Expira en 7 días
       }
 
-      if (responseData.refresh) {
-        localStorage.setItem("refreshToken", responseData.refresh)
-        console.log("✅ Token de refresco guardado en localStorage")
-      }
+      // Guardar información del usuario
+      Cookies.set("userData", JSON.stringify({ username: credentials.username }), { expires: 7 })
 
-      // Guardar datos del usuario
-      const userData: UserData = {
-        username: credentials.username,
+      return {
+        ...data,
+        user: { username: credentials.username },
       }
-      localStorage.setItem("userData", JSON.stringify(userData))
-      console.log("✅ Datos de usuario guardados:", userData)
-
-      return userData
     } catch (error) {
-      console.error("❌ Error en el login:", error)
+      console.error("Error en el login:", error)
       throw error
     }
   },
 
   // Refrescar token
   async refreshToken(): Promise<string | null> {
-    const refreshToken = localStorage.getItem("refreshToken")
-    console.log("🔄 Intentando refrescar token")
+    const refreshToken = Cookies.get("refreshToken")
 
     if (!refreshToken) {
-      console.log("❌ No hay refresh token disponible")
       return null
     }
 
@@ -135,64 +107,52 @@ export const authService = {
         body: JSON.stringify({ refresh: refreshToken }),
       })
 
-      const responseData = await response.json()
-
-      logRequest("REFRESH TOKEN - Respuesta", {
-        status: response.status,
-        statusText: response.statusText,
-        data: responseData,
-      })
+      const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(responseData.detail || "Error al refrescar token")
+        throw new Error(data.detail || "Error al refrescar token")
       }
 
-      // Actualizar token en localStorage
-      if (responseData.access) {
-        localStorage.setItem("accessToken", responseData.access)
-        console.log("✅ Token de acceso actualizado")
-        return responseData.access
+      // Actualizar token en cookies
+      if (data.access) {
+        Cookies.set("accessToken", data.access, { expires: 1 })
+        return data.access
       }
 
       return null
     } catch (error) {
-      console.error("❌ Error al refrescar token:", error)
+      console.error("Error al refrescar token:", error)
       return null
     }
   },
 
   // Cerrar sesión
   logout(): void {
-    console.log("🚪 Cerrando sesión")
-    localStorage.removeItem("accessToken")
-    localStorage.removeItem("refreshToken")
-    localStorage.removeItem("userData")
-    console.log("✅ Datos de sesión eliminados")
+    Cookies.remove("accessToken")
+    Cookies.remove("refreshToken")
+    Cookies.remove("userData")
   },
 
   // Verificar si el usuario está autenticado
   isAuthenticated(): boolean {
-    const token = localStorage.getItem("accessToken")
-    console.log("🔍 Verificando autenticación:", token ? "Token disponible" : "No hay token")
-    return !!token
+    return !!Cookies.get("accessToken")
   },
 
   // Obtener token de acceso
   getAccessToken(): string | null {
-    const token = localStorage.getItem("accessToken")
-    return token
+    return Cookies.get("accessToken") || null
   },
 
   // Obtener datos del usuario
   getUserData(): UserData | null {
-    try {
-      const userData = localStorage.getItem("userData")
-      const parsedData = userData ? JSON.parse(userData) : null
-      console.log("👤 Datos de usuario recuperados:", parsedData)
-      return parsedData
-    } catch (error) {
-      console.error("❌ Error al obtener datos del usuario:", error)
-      return null
+    const userData = Cookies.get("userData")
+    if (userData) {
+      try {
+        return JSON.parse(userData)
+      } catch (e) {
+        return null
+      }
     }
+    return null
   },
 }

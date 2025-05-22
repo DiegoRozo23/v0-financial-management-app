@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Calendar, Check, Edit, Plus, Target, Trash2, Download } from "lucide-react"
+import { Check, Edit, Plus, Target, Trash2, Download, Loader2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,47 +34,69 @@ import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/ui/chart"
 import { exportAsCSV, exportAsExcel, exportAsPDF, formatDataForExport } from "@/utils/export-utils"
-import { apiService, type Objetivo } from "@/services/api-service"
+import { apiService, type Objetivo, type Frecuencia } from "@/services/api-service"
+
+// Tipo extendido para manejar objetivos con datos adicionales de progreso
+interface ObjetivoExtendido extends Objetivo {
+  porcentaje: number
+  actual: number
+  completado?: boolean
+  fechaCompletado?: string
+}
 
 export default function ObjetivosPage() {
   const [openDialog, setOpenDialog] = useState<"nuevo" | "editar" | "ahorro" | null>(null)
-  const [objetivos, setObjetivos] = useState<Objetivo[]>([])
-  const [objetivosCompletados, setObjetivosCompletados] = useState<Objetivo[]>([])
-  const [objetivoActual, setObjetivoActual] = useState<Objetivo | null>(null)
+  const [objetivos, setObjetivos] = useState<ObjetivoExtendido[]>([])
+  const [objetivosCompletados, setObjetivosCompletados] = useState<ObjetivoExtendido[]>([])
+  const [objetivoActual, setObjetivoActual] = useState<ObjetivoExtendido | null>(null)
+  const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([])
   const [formData, setFormData] = useState({
     nombre: "",
     descripcion: "",
     actual: "",
-    objetivo: "",
+    meta: "",
+    frecuencia: "",
     fechaInicio: new Date().toISOString().split("T")[0],
     fechaFin: "",
   })
   const [montoAhorro, setMontoAhorro] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [isLoadingData, setIsLoadingData] = useState(true)
+  const [isFetching, setIsFetching] = useState(true)
   const [exportLoading, setExportLoading] = useState(false)
   const [showExportOptions, setShowExportOptions] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Cargar datos
+  // Cargar datos al montar el componente
   useEffect(() => {
     const fetchData = async () => {
-      setIsLoadingData(true)
+      setIsFetching(true)
       setError(null)
+
       try {
-        const data = await apiService.getObjetivos()
+        // Obtener objetivos y frecuencias en paralelo
+        const [objetivosData, frecuenciasData] = await Promise.all([
+          apiService.getObjetivos(),
+          apiService.getFrecuencias(),
+        ])
 
-        // Separar objetivos completados y en progreso
-        const completados = data.filter((obj) => obj.completado)
-        const enProgreso = data.filter((obj) => !obj.completado)
+        // Transformar objetivos para incluir campos adicionales de progreso
+        // Nota: El API no proporciona estos campos, así que se agregan con valores por defecto
+        const objetivosExtendidos = objetivosData.map((objetivo) => ({
+          ...objetivo,
+          actual: 0, // Valor simulado, en un caso real se calcularía basado en transacciones relacionadas
+          porcentaje: 0, // Se calcularía como (actual / meta) * 100
+          completado: false,
+        }))
 
-        setObjetivos(enProgreso)
-        setObjetivosCompletados(completados)
+        // Separar en activos y completados (en este caso todos son activos)
+        setObjetivos(objetivosExtendidos.filter((obj) => !obj.completado))
+        setObjetivosCompletados(objetivosExtendidos.filter((obj) => obj.completado))
+        setFrecuencias(frecuenciasData)
       } catch (err) {
         console.error("Error al cargar objetivos:", err)
-        setError("Error al cargar los objetivos. Por favor, intenta de nuevo más tarde.")
+        setError("No se pudieron cargar los objetivos. Intente nuevamente más tarde.")
       } finally {
-        setIsLoadingData(false)
+        setIsFetching(false)
       }
     }
 
@@ -86,12 +108,17 @@ export default function ObjetivosPage() {
     setFormData((prev) => ({ ...prev, [id.split("-")[0]]: value }))
   }
 
+  const handleSelectChange = (value: string) => {
+    setFormData((prev) => ({ ...prev, frecuencia: value }))
+  }
+
   const resetForm = () => {
     setFormData({
       nombre: "",
       descripcion: "",
       actual: "",
-      objetivo: "",
+      meta: "",
+      frecuencia: "",
       fechaInicio: new Date().toISOString().split("T")[0],
       fechaFin: "",
     })
@@ -104,7 +131,7 @@ export default function ObjetivosPage() {
     setError(null)
 
     // Validación básica
-    if (!formData.nombre || !formData.objetivo || !formData.fechaInicio || !formData.fechaFin) {
+    if (!formData.nombre || !formData.meta || !formData.fechaInicio || !formData.frecuencia) {
       toast({
         title: "Error",
         description: "Por favor completa todos los campos obligatorios",
@@ -115,27 +142,35 @@ export default function ObjetivosPage() {
     }
 
     try {
-      // Asegurarse de que los valores numéricos sean números
-      const objetivoNumerico = Number.parseFloat(formData.objetivo)
-      const actualNumerico = formData.actual ? Number.parseFloat(formData.actual) : 0
+      // Obtener el objeto de frecuencia seleccionado
+      const frecuenciaSeleccionada = frecuencias.find((f) => f.id.toString() === formData.frecuencia)
 
-      // Crear objeto con la estructura correcta según la API
-      const objetivoData: Objetivo = {
+      if (!frecuenciaSeleccionada) {
+        throw new Error("Frecuencia no válida")
+      }
+
+      const dataToSave = {
         nombre: formData.nombre,
-        descripcion: formData.descripcion,
-        actual: actualNumerico,
-        objetivo: objetivoNumerico,
-        fechaInicio: formData.fechaInicio,
-        fechaFin: formData.fechaFin,
-        completado: false,
+        meta: Number.parseFloat(formData.meta),
+        frecuencia: frecuenciaSeleccionada,
       }
 
       if (objetivoActual) {
         // Actualizar objetivo existente
-        const updatedObjetivo = await apiService.updateObjetivo(objetivoActual.id!, objetivoData)
+        const updatedObjetivo = await apiService.updateObjetivo(objetivoActual.id || 0, dataToSave)
 
         // Actualizar estado local
-        setObjetivos((prev) => prev.map((obj) => (obj.id === objetivoActual.id ? updatedObjetivo : obj)))
+        const updatedObjetivos = objetivos.map((obj) =>
+          obj.id === objetivoActual.id
+            ? {
+                ...updatedObjetivo,
+                actual: obj.actual, // Mantener el valor actual
+                porcentaje: Math.round((obj.actual / updatedObjetivo.meta) * 100),
+              }
+            : obj,
+        )
+
+        setObjetivos(updatedObjetivos)
 
         toast({
           title: "Objetivo actualizado",
@@ -143,46 +178,54 @@ export default function ObjetivosPage() {
         })
       } else {
         // Crear nuevo objetivo
-        const newObjetivo = await apiService.createObjetivo(objetivoData)
+        const newObjetivo = await apiService.createObjetivo(dataToSave)
 
-        // Actualizar estado local
-        setObjetivos((prev) => [...prev, newObjetivo])
+        // Agregar al estado local con campos adicionales
+        const objetivoExtendido: ObjetivoExtendido = {
+          ...newObjetivo,
+          actual: formData.actual ? Number.parseFloat(formData.actual) : 0,
+          porcentaje: formData.actual
+            ? Math.round((Number.parseFloat(formData.actual) / Number.parseFloat(formData.meta)) * 100)
+            : 0,
+        }
+
+        setObjetivos([...objetivos, objetivoExtendido])
 
         toast({
           title: "Objetivo creado",
           description: `Se ha creado "${formData.nombre}" correctamente.`,
         })
       }
-
-      setOpenDialog(null)
-      resetForm()
     } catch (err) {
       console.error("Error al guardar objetivo:", err)
       toast({
         title: "Error",
-        description:
-          err instanceof Error ? err.message : "Ocurrió un error al guardar el objetivo. Inténtalo de nuevo.",
+        description: "No se pudo guardar el objetivo. Intente nuevamente.",
         variant: "destructive",
       })
     } finally {
       setIsLoading(false)
+      setOpenDialog(null)
+      resetForm()
     }
   }
 
-  const handleEdit = (objetivo: Objetivo) => {
+  const handleEdit = (objetivo: ObjetivoExtendido) => {
     setObjetivoActual(objetivo)
     setFormData({
       nombre: objetivo.nombre,
-      descripcion: objetivo.descripcion,
+      descripcion: "",
       actual: objetivo.actual.toString(),
-      objetivo: objetivo.objetivo.toString(),
-      fechaInicio: objetivo.fechaInicio,
-      fechaFin: objetivo.fechaFin,
+      meta: objetivo.meta.toString(),
+      frecuencia: objetivo.frecuencia.id.toString(),
+      fechaInicio: new Date().toISOString().split("T")[0], // Usar fecha actual como valor por defecto
+      fechaFin: "",
     })
     setOpenDialog("editar")
   }
 
   const handleDelete = async (id: number) => {
+    setIsLoading(true)
     try {
       await apiService.deleteObjetivo(id)
 
@@ -197,15 +240,16 @@ export default function ObjetivosPage() {
       console.error("Error al eliminar objetivo:", err)
       toast({
         title: "Error",
-        description: "Ocurrió un error al eliminar el objetivo. Inténtalo de nuevo.",
+        description: "No se pudo eliminar el objetivo. Intente nuevamente.",
         variant: "destructive",
       })
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleAgregarAhorro = async () => {
+  const handleAgregarAhorro = () => {
     setIsLoading(true)
-    setError(null)
 
     // Validación básica
     if (!montoAhorro || Number.parseFloat(montoAhorro) <= 0) {
@@ -218,35 +262,45 @@ export default function ObjetivosPage() {
       return
     }
 
-    try {
+    // Nota: Esta función es simulada ya que el API no tiene endpoint para actualizar el progreso
+    // En una implementación real, se haría una llamada a la API
+    setTimeout(() => {
       if (objetivoActual) {
         const monto = Number.parseFloat(montoAhorro)
         const nuevoActual = objetivoActual.actual + monto
+        const nuevoPorcentaje = Math.min(100, Math.round((nuevoActual / objetivoActual.meta) * 100))
 
         // Verificar si se completó el objetivo
-        const completado = nuevoActual >= objetivoActual.objetivo
-
-        // Actualizar objetivo
-        const objetivoActualizado: Objetivo = {
-          ...objetivoActual,
-          actual: completado ? objetivoActual.objetivo : nuevoActual,
-          completado,
-        }
-
-        const updatedObjetivo = await apiService.updateObjetivo(objetivoActual.id!, objetivoActualizado)
-
-        if (completado) {
+        if (nuevoActual >= objetivoActual.meta) {
           // Mover a objetivos completados
-          setObjetivosCompletados((prev) => [...prev, updatedObjetivo])
-          setObjetivos((prev) => prev.filter((obj) => obj.id !== objetivoActual.id))
+          const fechaActual = new Date().toISOString().split("T")[0]
+          const objetivoCompletado = {
+            ...objetivoActual,
+            actual: objetivoActual.meta,
+            porcentaje: 100,
+            completado: true,
+            fechaCompletado: fechaActual,
+          }
+
+          setObjetivosCompletados([...objetivosCompletados, objetivoCompletado])
+          setObjetivos(objetivos.filter((obj) => obj.id !== objetivoActual.id))
 
           toast({
             title: "¡Felicidades!",
             description: `Has completado tu objetivo "${objetivoActual.nombre}".`,
           })
         } else {
-          // Actualizar en la lista de objetivos en progreso
-          setObjetivos((prev) => prev.map((obj) => (obj.id === objetivoActual.id ? updatedObjetivo : obj)))
+          // Actualizar objetivo
+          const updatedObjetivos = objetivos.map((obj) =>
+            obj.id === objetivoActual.id
+              ? {
+                  ...obj,
+                  actual: nuevoActual,
+                  porcentaje: nuevoPorcentaje,
+                }
+              : obj,
+          )
+          setObjetivos(updatedObjetivos)
 
           toast({
             title: "Ahorro registrado",
@@ -255,18 +309,10 @@ export default function ObjetivosPage() {
         }
       }
 
+      setIsLoading(false)
       setOpenDialog(null)
       resetForm()
-    } catch (err) {
-      console.error("Error al agregar ahorro:", err)
-      toast({
-        title: "Error",
-        description: "Ocurrió un error al agregar el ahorro. Inténtalo de nuevo.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
+    }, 600)
   }
 
   const formatDate = (dateString: string) => {
@@ -304,37 +350,25 @@ export default function ObjetivosPage() {
     }, 1000)
   }
 
-  // Calcular porcentaje para cada objetivo
-  const objetivosConPorcentaje = objetivos.map((obj) => ({
-    ...obj,
-    porcentaje: Math.round((obj.actual / obj.objetivo) * 100),
-  }))
-
   // Datos para el gráfico de progreso
-  const progresoData = objetivosConPorcentaje.map((obj) => ({
+  const progresoData = objetivos.map((obj) => ({
     name: obj.nombre,
     actual: obj.actual,
-    objetivo: obj.objetivo,
+    objetivo: obj.meta,
     porcentaje: obj.porcentaje,
   }))
 
-  if (isLoadingData) {
+  if (isFetching) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Cargando objetivos...</p>
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Objetivos Financieros</h1>
+            <p className="text-muted-foreground">Cargando datos...</p>
+          </div>
         </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
-          <Button onClick={() => window.location.reload()}>Reintentar</Button>
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-12 w-12 animate-spin text-green-600" />
         </div>
       </div>
     )
@@ -375,23 +409,29 @@ export default function ObjetivosPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="descripcion-nuevo">Descripción</Label>
-                  <Textarea
-                    id="descripcion-nuevo"
-                    placeholder="Describe tu objetivo..."
-                    value={formData.descripcion}
+                  <Label htmlFor="meta-nuevo">Monto Objetivo</Label>
+                  <Input
+                    id="meta-nuevo"
+                    type="number"
+                    placeholder="0.00"
+                    value={formData.meta}
                     onChange={handleInputChange}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="objetivo-nuevo">Monto Objetivo</Label>
-                  <Input
-                    id="objetivo-nuevo"
-                    type="number"
-                    placeholder="0.00"
-                    value={formData.objetivo}
-                    onChange={handleInputChange}
-                  />
+                  <Label htmlFor="frecuencia-nuevo">Frecuencia</Label>
+                  <Select value={formData.frecuencia} onValueChange={handleSelectChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona una frecuencia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {frecuencias.map((frecuencia) => (
+                        <SelectItem key={frecuencia.id} value={frecuencia.id.toString()}>
+                          {frecuencia.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="actual-nuevo">Monto Actual (opcional)</Label>
@@ -403,20 +443,9 @@ export default function ObjetivosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="fechaInicio-nuevo">Fecha Inicio</Label>
-                    <Input
-                      id="fechaInicio-nuevo"
-                      type="date"
-                      value={formData.fechaInicio}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="fechaFin-nuevo">Fecha Fin</Label>
-                    <Input id="fechaFin-nuevo" type="date" value={formData.fechaFin} onChange={handleInputChange} />
-                  </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="fechaInicio-nuevo">Fecha Inicio</Label>
+                  <Input id="fechaInicio-nuevo" type="date" value={formData.fechaInicio} onChange={handleInputChange} />
                 </div>
               </div>
               <DialogFooter>
@@ -479,7 +508,16 @@ export default function ObjetivosPage() {
         </div>
       </div>
 
-      {objetivosConPorcentaje.length > 0 && (
+      {error && (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()}>Reintentar</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {objetivos.length > 0 && !error && (
         <Card>
           <CardHeader>
             <CardTitle>Progreso de Objetivos</CardTitle>
@@ -517,101 +555,113 @@ export default function ObjetivosPage() {
       )}
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {objetivosConPorcentaje.map((objetivo) => (
-          <Card key={objetivo.id} className="overflow-hidden">
-            <CardHeader className="pb-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle>{objetivo.nombre}</CardTitle>
-                  <CardDescription className="mt-1">{objetivo.descripcion}</CardDescription>
-                </div>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(objetivo)}>
-                    <Edit className="h-4 w-4" />
-                    <span className="sr-only">Editar</span>
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 dark:text-red-400">
-                        <Trash2 className="h-4 w-4" />
-                        <span className="sr-only">Eliminar</span>
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction
-                          className="bg-red-600 hover:bg-red-700"
-                          onClick={() => handleDelete(objetivo.id!)}
-                        >
-                          Eliminar
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="pb-2">
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-muted-foreground">Progreso</div>
-                  <div className="text-sm font-medium">{objetivo.porcentaje}%</div>
-                </div>
-                <Progress value={objetivo.porcentaje} className="h-2" />
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-muted-foreground">Ahorrado</div>
-                  <div className="text-sm font-medium">${objetivo.actual.toLocaleString()}</div>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-muted-foreground">Meta</div>
-                  <div className="text-sm font-medium">${objetivo.objetivo.toLocaleString()}</div>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-muted-foreground">Falta</div>
-                  <div className="text-sm font-medium">${(objetivo.objetivo - objetivo.actual).toLocaleString()}</div>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Calendar className="h-4 w-4" />
-                  <span>
-                    {formatDate(objetivo.fechaInicio)} - {formatDate(objetivo.fechaFin)}
-                  </span>
-                </div>
+        {objetivos.length === 0 && !error ? (
+          <Card className="md:col-span-2 lg:col-span-3">
+            <CardContent className="p-6 text-center">
+              <div className="text-muted-foreground py-12">
+                <Target className="mx-auto h-12 w-12 mb-4" />
+                <p className="text-lg">No tienes objetivos financieros registrados</p>
+                <p className="mb-4">Crea tu primer objetivo para comenzar a ahorrar</p>
+                <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog("nuevo")}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Crear Objetivo
+                </Button>
               </div>
             </CardContent>
-            <div className="p-6 pt-0">
-              <Button
-                className="w-full bg-green-600 hover:bg-green-700"
-                onClick={() => {
-                  setObjetivoActual(objetivo)
-                  setOpenDialog("ahorro")
-                }}
-              >
+          </Card>
+        ) : (
+          objetivos.map((objetivo) => (
+            <Card key={objetivo.id} className="overflow-hidden">
+              <CardHeader className="pb-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <CardTitle>{objetivo.nombre}</CardTitle>
+                    <CardDescription className="mt-1">Frecuencia: {objetivo.frecuencia.nombre}</CardDescription>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(objetivo)}>
+                      <Edit className="h-4 w-4" />
+                      <span className="sr-only">Editar</span>
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 dark:text-red-400">
+                          <Trash2 className="h-4 w-4" />
+                          <span className="sr-only">Eliminar</span>
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-600 hover:bg-red-700"
+                            onClick={() => handleDelete(objetivo.id || 0)}
+                          >
+                            Eliminar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="pb-2">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-muted-foreground">Progreso</div>
+                    <div className="text-sm font-medium">{objetivo.porcentaje}%</div>
+                  </div>
+                  <Progress value={objetivo.porcentaje} className="h-2" />
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-muted-foreground">Ahorrado</div>
+                    <div className="text-sm font-medium">${objetivo.actual.toLocaleString()}</div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-muted-foreground">Meta</div>
+                    <div className="text-sm font-medium">${objetivo.meta.toLocaleString()}</div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-muted-foreground">Falta</div>
+                    <div className="text-sm font-medium">${(objetivo.meta - objetivo.actual).toLocaleString()}</div>
+                  </div>
+                </div>
+              </CardContent>
+              <div className="p-6 pt-0">
+                <Button
+                  className="w-full bg-green-600 hover:bg-green-700"
+                  onClick={() => {
+                    setObjetivoActual(objetivo)
+                    setOpenDialog("ahorro")
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Agregar Ahorro
+                </Button>
+              </div>
+            </Card>
+          ))
+        )}
+        {objetivos.length > 0 && !error && (
+          <Card className="flex flex-col items-center justify-center p-6 border-dashed">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+                <Target className="h-6 w-6" />
+              </div>
+              <h3 className="text-lg font-medium mb-2">Crear nuevo objetivo</h3>
+              <p className="text-sm text-muted-foreground mb-4">Establece una nueva meta financiera para ahorrar</p>
+              <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog("nuevo")}>
                 <Plus className="mr-2 h-4 w-4" />
-                Agregar Ahorro
+                Crear Objetivo
               </Button>
             </div>
           </Card>
-        ))}
-        <Card className="flex flex-col items-center justify-center p-6 border-dashed">
-          <div className="flex flex-col items-center text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
-              <Target className="h-6 w-6" />
-            </div>
-            <h3 className="text-lg font-medium mb-2">Crear nuevo objetivo</h3>
-            <p className="text-sm text-muted-foreground mb-4">Establece una nueva meta financiera para ahorrar</p>
-            <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog("nuevo")}>
-              <Plus className="mr-2 h-4 w-4" />
-              Crear Objetivo
-            </Button>
-          </div>
-        </Card>
+        )}
       </div>
 
       <Dialog
@@ -637,15 +687,12 @@ export default function ObjetivosPage() {
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Progreso actual:</span>
-                <span>{objetivoActual ? Math.round((objetivoActual.actual / objetivoActual.objetivo) * 100) : 0}%</span>
+                <span>{objetivoActual?.porcentaje}%</span>
               </div>
-              <Progress
-                value={objetivoActual ? Math.round((objetivoActual.actual / objetivoActual.objetivo) * 100) : 0}
-                className="h-2"
-              />
+              <Progress value={objetivoActual?.porcentaje} className="h-2" />
               <div className="flex justify-between text-sm">
                 <span>Ahorrado: ${objetivoActual?.actual.toLocaleString()}</span>
-                <span>Meta: ${objetivoActual?.objetivo.toLocaleString()}</span>
+                <span>Meta: ${objetivoActual?.meta.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -683,9 +730,11 @@ export default function ObjetivosPage() {
                   </div>
                   <div className="flex-1">
                     <h4 className="text-sm font-medium">{objetivo.nombre}</h4>
-                    <p className="text-xs text-muted-foreground">Completado el {formatDate(objetivo.fechaFin)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Completado el {objetivo.fechaCompletado ? formatDate(objetivo.fechaCompletado) : "N/A"}
+                    </p>
                   </div>
-                  <div className="text-sm font-medium">${objetivo.objetivo.toLocaleString()}</div>
+                  <div className="text-sm font-medium">${objetivo.meta.toLocaleString()}</div>
                 </div>
               ))}
             </div>

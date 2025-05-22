@@ -3,12 +3,24 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowDown, ArrowUp, Calendar, CreditCard, Filter, Plus, Search, Trash2, Edit, Download } from "lucide-react"
+import {
+  ArrowDown,
+  ArrowUp,
+  Calendar,
+  CreditCard,
+  Filter,
+  Plus,
+  Search,
+  Trash2,
+  Edit,
+  Download,
+  Loader2,
+} from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -34,14 +46,27 @@ import {
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { exportAsCSV, exportAsExcel, exportAsPDF, formatDataForExport } from "@/utils/export-utils"
-import { apiService, type Ingreso, type Gasto, type Categoria } from "@/services/api-service"
+import { apiService, type Ingreso, type Gasto } from "@/services/api-service"
 
-// Tipo combinado para transacciones
-type Transaccion = (Ingreso | Gasto) & { tipo: "ingreso" | "gasto" }
+// Interfaz unificada para mostrar transacciones
+interface Transaccion {
+  id: string
+  tipo: "ingreso" | "gasto"
+  concepto: string
+  monto: number
+  fecha: string
+  categoria: string
+  originalId: number
+}
 
 export default function IngresosGastosPage() {
+  const searchParams = useSearchParams()
+  const nuevoParam = searchParams.get("nuevo")
+
   const [activeTab, setActiveTab] = useState("todos")
-  const [openDialog, setOpenDialog] = useState<"ingreso" | "gasto" | "editar" | null>(null)
+  const [openDialog, setOpenDialog] = useState<"ingreso" | "gasto" | "editar" | null>(
+    nuevoParam === "ingreso" ? "ingreso" : nuevoParam === "gasto" ? "gasto" : null,
+  )
   const [searchTerm, setSearchTerm] = useState("")
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
   const [transaccionActual, setTransaccionActual] = useState<Transaccion | null>(null)
@@ -52,43 +77,53 @@ export default function IngresosGastosPage() {
     fecha: new Date().toISOString().split("T")[0],
   })
   const [isLoading, setIsLoading] = useState(false)
-  const [isLoadingData, setIsLoadingData] = useState(true)
+  const [isFetching, setIsFetching] = useState(true)
   const [exportLoading, setExportLoading] = useState(false)
   const [showExportOptions, setShowExportOptions] = useState(false)
-  const [categorias, setCategorias] = useState<Categoria[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Cargar datos
+  // Cargar datos al montar el componente
   useEffect(() => {
     const fetchData = async () => {
-      setIsLoadingData(true)
+      setIsFetching(true)
       setError(null)
+
       try {
-        // Cargar ingresos
-        const ingresos = await apiService.getIngresos()
-        const ingresosFormateados = ingresos.map((ingreso) => ({
-          ...ingreso,
-          tipo: "ingreso" as const,
+        // Obtener datos de ingresos y gastos en paralelo
+        const [ingresosData, gastosData] = await Promise.all([apiService.getIngresos(), apiService.getGastos()])
+
+        // Transformar a formato unificado
+        const ingresosFormateados: Transaccion[] = ingresosData.map((ingreso) => ({
+          id: `ingreso-${ingreso.id}`,
+          tipo: "ingreso",
+          concepto: ingreso.descripcion,
+          monto: ingreso.monto,
+          fecha: ingreso.fecha,
+          categoria: "Ingreso",
+          originalId: ingreso.id || 0,
         }))
 
-        // Cargar gastos
-        const gastos = await apiService.getGastos()
-        const gastosFormateados = gastos.map((gasto) => ({
-          ...gasto,
-          tipo: "gasto" as const,
+        const gastosFormateados: Transaccion[] = gastosData.map((gasto) => ({
+          id: `gasto-${gasto.id}`,
+          tipo: "gasto",
+          concepto: gasto.descripcion,
+          monto: gasto.monto,
+          fecha: gasto.fecha,
+          categoria: "Gasto",
+          originalId: gasto.id || 0,
         }))
 
-        // Combinar transacciones
-        setTransacciones([...ingresosFormateados, ...gastosFormateados])
+        // Combinar y ordenar por fecha (más reciente primero)
+        const todasTransacciones = [...ingresosFormateados, ...gastosFormateados].sort(
+          (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+        )
 
-        // Cargar categorías
-        const categoriasData = await apiService.getCategorias()
-        setCategorias(categoriasData)
+        setTransacciones(todasTransacciones)
       } catch (err) {
-        console.error("Error al cargar datos:", err)
-        setError("Error al cargar los datos. Por favor, intenta de nuevo más tarde.")
+        console.error("Error al cargar ingresos y gastos:", err)
+        setError("No se pudieron cargar los datos. Intente nuevamente más tarde.")
       } finally {
-        setIsLoadingData(false)
+        setIsFetching(false)
       }
     }
 
@@ -104,9 +139,17 @@ export default function IngresosGastosPage() {
         t.categoria.toLowerCase().includes(searchTerm.toLowerCase()),
     )
 
-  const categoriasIngresos = categorias.filter((cat) => cat.tipo === "ingreso").map((cat) => cat.nombre)
-
-  const categoriasGastos = categorias.filter((cat) => cat.tipo === "gasto").map((cat) => cat.nombre)
+  const categoriasIngresos = ["Trabajo", "Inversiones", "Regalos", "Otros"]
+  const categoriasGastos = [
+    "Alimentación",
+    "Vivienda",
+    "Transporte",
+    "Entretenimiento",
+    "Servicios",
+    "Compras",
+    "Salud",
+    "Otros",
+  ]
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { id, value } = e.target
@@ -132,7 +175,7 @@ export default function IngresosGastosPage() {
     setError(null)
 
     // Validación básica
-    if (!formData.concepto || !formData.monto || !formData.categoria || !formData.fecha) {
+    if (!formData.concepto || !formData.monto || !formData.fecha) {
       toast({
         title: "Error",
         description: "Por favor completa todos los campos",
@@ -143,27 +186,32 @@ export default function IngresosGastosPage() {
     }
 
     try {
-      // Asegurarse de que el monto sea un número
-      const montoNumerico = Number.parseFloat(formData.monto)
-
-      // Crear objeto con la estructura correcta según la API
-      const data = {
-        concepto: formData.concepto,
-        monto: montoNumerico,
-        categoria: formData.categoria,
-        fecha: formData.fecha,
-      }
-
       if (transaccionActual) {
         // Actualizar transacción existente
+        const dataToUpdate = {
+          descripcion: formData.concepto,
+          monto: Number.parseFloat(formData.monto),
+          fecha: formData.fecha,
+        }
+
         if (transaccionActual.tipo === "ingreso") {
-          await apiService.updateIngreso(transaccionActual.id!, data as Ingreso)
+          await apiService.updateIngreso(transaccionActual.originalId, dataToUpdate as Ingreso)
         } else {
-          await apiService.updateGasto(transaccionActual.id!, data as Gasto)
+          await apiService.updateGasto(transaccionActual.originalId, dataToUpdate as Gasto)
         }
 
         // Actualizar estado local
-        setTransacciones((prev) => prev.map((t) => (t.id === transaccionActual.id ? { ...t, ...data } : t)))
+        const updatedTransacciones = transacciones.map((t) =>
+          t.id === transaccionActual.id
+            ? {
+                ...t,
+                concepto: formData.concepto,
+                monto: Number.parseFloat(formData.monto),
+                fecha: formData.fecha,
+              }
+            : t,
+        )
+        setTransacciones(updatedTransacciones)
 
         toast({
           title: "Transacción actualizada",
@@ -171,36 +219,56 @@ export default function IngresosGastosPage() {
         })
       } else {
         // Crear nueva transacción
+        const newData = {
+          descripcion: formData.concepto,
+          monto: Number.parseFloat(formData.monto),
+          fecha: formData.fecha,
+        }
+
         let newTransaccion: Transaccion
 
         if (openDialog === "ingreso") {
-          const response = await apiService.createIngreso(data as Ingreso)
-          newTransaccion = { ...response, tipo: "ingreso" }
+          const createdIngreso = await apiService.createIngreso(newData as Ingreso)
+          newTransaccion = {
+            id: `ingreso-${createdIngreso.id}`,
+            tipo: "ingreso",
+            concepto: createdIngreso.descripcion,
+            monto: createdIngreso.monto,
+            fecha: createdIngreso.fecha,
+            categoria: "Ingreso",
+            originalId: createdIngreso.id || 0,
+          }
         } else {
-          const response = await apiService.createGasto(data as Gasto)
-          newTransaccion = { ...response, tipo: "gasto" }
+          const createdGasto = await apiService.createGasto(newData as Gasto)
+          newTransaccion = {
+            id: `gasto-${createdGasto.id}`,
+            tipo: "gasto",
+            concepto: createdGasto.descripcion,
+            monto: createdGasto.monto,
+            fecha: createdGasto.fecha,
+            categoria: "Gasto",
+            originalId: createdGasto.id || 0,
+          }
         }
 
-        setTransacciones((prev) => [...prev, newTransaccion])
+        setTransacciones([newTransaccion, ...transacciones])
 
         toast({
           title: "Transacción creada",
           description: `Se ha registrado "${formData.concepto}" correctamente.`,
         })
       }
-
-      setOpenDialog(null)
-      resetForm()
     } catch (err) {
-      console.error("Error al guardar transacción:", err)
+      console.error("Error al guardar la transacción:", err)
       toast({
         title: "Error",
-        description:
-          err instanceof Error ? err.message : "Ocurrió un error al guardar la transacción. Inténtalo de nuevo.",
+        description: "No se pudo guardar la transacción. Intente nuevamente.",
         variant: "destructive",
       })
     } finally {
       setIsLoading(false)
+      setOpenDialog(null)
+      resetForm()
     }
   }
 
@@ -215,28 +283,31 @@ export default function IngresosGastosPage() {
     setOpenDialog("editar")
   }
 
-  const handleDelete = async (id: number, tipo: "ingreso" | "gasto") => {
+  const handleDelete = async (transaccion: Transaccion) => {
+    setIsLoading(true)
     try {
-      if (tipo === "ingreso") {
-        await apiService.deleteIngreso(id)
+      if (transaccion.tipo === "ingreso") {
+        await apiService.deleteIngreso(transaccion.originalId)
       } else {
-        await apiService.deleteGasto(id)
+        await apiService.deleteGasto(transaccion.originalId)
       }
 
       // Actualizar estado local
-      setTransacciones(transacciones.filter((t) => t.id !== id))
+      setTransacciones(transacciones.filter((t) => t.id !== transaccion.id))
 
       toast({
         title: "Transacción eliminada",
         description: "La transacción ha sido eliminada correctamente.",
       })
     } catch (err) {
-      console.error("Error al eliminar transacción:", err)
+      console.error("Error al eliminar la transacción:", err)
       toast({
         title: "Error",
-        description: "Ocurrió un error al eliminar la transacción. Inténtalo de nuevo.",
+        description: "No se pudo eliminar la transacción. Intente nuevamente.",
         variant: "destructive",
       })
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -249,7 +320,16 @@ export default function IngresosGastosPage() {
     setExportLoading(true)
 
     setTimeout(() => {
-      const dataToExport = formatDataForExport(filteredTransacciones, "ingresos-gastos")
+      const dataToExport = formatDataForExport(
+        filteredTransacciones.map((t) => ({
+          tipo: t.tipo,
+          concepto: t.concepto,
+          categoria: t.categoria,
+          fecha: t.fecha,
+          monto: t.monto,
+        })),
+        "ingresos-gastos",
+      )
       const fileName = `transacciones_${new Date().toISOString().split("T")[0]}`
 
       switch (format) {
@@ -278,27 +358,7 @@ export default function IngresosGastosPage() {
 
   const totalGastos = transacciones.filter((t) => t.tipo === "gasto").reduce((sum, t) => sum + t.monto, 0)
 
-  if (isLoadingData) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Cargando datos...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
-          <Button onClick={() => window.location.reload()}>Reintentar</Button>
-        </div>
-      </div>
-    )
-  }
+  const balance = totalIngresos - totalGastos
 
   return (
     <div className="space-y-6">
@@ -343,21 +403,6 @@ export default function IngresosGastosPage() {
                     value={formData.monto}
                     onChange={handleInputChange}
                   />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="categoria-ingreso">Categoría</Label>
-                  <Select value={formData.categoria} onValueChange={handleSelectChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona una categoría" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categoriasIngresos.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="fecha-ingreso">Fecha</Label>
@@ -420,21 +465,6 @@ export default function IngresosGastosPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="categoria-gasto">Categoría</Label>
-                  <Select value={formData.categoria} onValueChange={handleSelectChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona una categoría" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categoriasGastos.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
                   <Label htmlFor="fecha-gasto">Fecha</Label>
                   <div className="relative">
                     <Input id="fecha-gasto" type="date" value={formData.fecha} onChange={handleInputChange} />
@@ -489,27 +519,6 @@ export default function IngresosGastosPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="categoria-editar">Categoría</Label>
-                  <Select value={formData.categoria} onValueChange={handleSelectChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona una categoría" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {transaccionActual?.tipo === "ingreso"
-                        ? categoriasIngresos.map((cat) => (
-                            <SelectItem key={cat} value={cat}>
-                              {cat}
-                            </SelectItem>
-                          ))
-                        : categoriasGastos.map((cat) => (
-                            <SelectItem key={cat} value={cat}>
-                              {cat}
-                            </SelectItem>
-                          ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
                   <Label htmlFor="fecha-editar">Fecha</Label>
                   <div className="relative">
                     <Input id="fecha-editar" type="date" value={formData.fecha} onChange={handleInputChange} />
@@ -552,7 +561,9 @@ export default function IngresosGastosPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">${totalIngresos.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">Todos tus ingresos registrados</div>
+            <div className="text-xs text-muted-foreground">
+              {transacciones.filter((t) => t.tipo === "ingreso").length} transacciones
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -562,7 +573,9 @@ export default function IngresosGastosPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">${totalGastos.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">Todos tus gastos registrados</div>
+            <div className="text-xs text-muted-foreground">
+              {transacciones.filter((t) => t.tipo === "gasto").length} transacciones
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -571,8 +584,10 @@ export default function IngresosGastosPage() {
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${(totalIngresos - totalGastos).toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">Diferencia entre ingresos y gastos</div>
+            <div className="text-2xl font-bold">${balance.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground">
+              {balance >= 0 ? "Balance positivo" : "Balance negativo"}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -659,95 +674,109 @@ export default function IngresosGastosPage() {
 
         <Card>
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Concepto</TableHead>
-                  <TableHead>Categoría</TableHead>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead className="text-right">Monto</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredTransacciones.length === 0 ? (
+            {isFetching ? (
+              <div className="flex justify-center items-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">Cargando transacciones...</span>
+              </div>
+            ) : error ? (
+              <div className="text-center py-8 text-red-600">
+                <p>{error}</p>
+                <Button variant="outline" className="mt-4" onClick={() => window.location.reload()}>
+                  Reintentar
+                </Button>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No se encontraron transacciones
-                    </TableCell>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Concepto</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead className="text-right">Monto</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ) : (
-                  filteredTransacciones.map((transaccion) => (
-                    <TableRow key={transaccion.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                              transaccion.tipo === "ingreso"
-                                ? "bg-green-100 dark:bg-green-900"
-                                : "bg-red-100 dark:bg-red-900"
-                            }`}
-                          >
-                            {transaccion.tipo === "ingreso" ? (
-                              <ArrowUp className="h-4 w-4 text-green-600 dark:text-green-400" />
-                            ) : (
-                              <ArrowDown className="h-4 w-4 text-red-600 dark:text-red-400" />
-                            )}
-                          </div>
-                          <span className="capitalize">{transaccion.tipo}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{transaccion.concepto}</TableCell>
-                      <TableCell>{transaccion.categoria}</TableCell>
-                      <TableCell>{formatDate(transaccion.fecha)}</TableCell>
-                      <TableCell
-                        className={`text-right font-medium ${
-                          transaccion.tipo === "ingreso"
-                            ? "text-green-600 dark:text-green-400"
-                            : "text-red-600 dark:text-red-400"
-                        }`}
-                      >
-                        {transaccion.tipo === "ingreso" ? "+" : "-"}${transaccion.monto.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(transaccion)}>
-                            <Edit className="h-4 w-4" />
-                            <span className="sr-only">Editar</span>
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
-                                <Trash2 className="h-4 w-4" />
-                                <span className="sr-only">Eliminar</span>
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Esta acción no se puede deshacer. Esto eliminará permanentemente la transacción.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-red-600 hover:bg-red-700"
-                                  onClick={() => handleDelete(transaccion.id!, transaccion.tipo)}
-                                >
-                                  Eliminar
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredTransacciones.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        No se encontraron transacciones
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : (
+                    filteredTransacciones.map((transaccion) => (
+                      <TableRow key={transaccion.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                                transaccion.tipo === "ingreso"
+                                  ? "bg-green-100 dark:bg-green-900"
+                                  : "bg-red-100 dark:bg-red-900"
+                              }`}
+                            >
+                              {transaccion.tipo === "ingreso" ? (
+                                <ArrowUp className="h-4 w-4 text-green-600 dark:text-green-400" />
+                              ) : (
+                                <ArrowDown className="h-4 w-4 text-red-600 dark:text-red-400" />
+                              )}
+                            </div>
+                            <span className="capitalize">{transaccion.tipo}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>{transaccion.concepto}</TableCell>
+                        <TableCell>{transaccion.categoria}</TableCell>
+                        <TableCell>{formatDate(transaccion.fecha)}</TableCell>
+                        <TableCell
+                          className={`text-right font-medium ${
+                            transaccion.tipo === "ingreso"
+                              ? "text-green-600 dark:text-green-400"
+                              : "text-red-600 dark:text-red-400"
+                          }`}
+                        >
+                          {transaccion.tipo === "ingreso" ? "+" : "-"}${transaccion.monto.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleEdit(transaccion)}>
+                              <Edit className="h-4 w-4" />
+                              <span className="sr-only">Editar</span>
+                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
+                                  <Trash2 className="h-4 w-4" />
+                                  <span className="sr-only">Eliminar</span>
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Esta acción no se puede deshacer. Esto eliminará permanentemente la transacción.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-red-600 hover:bg-red-700"
+                                    onClick={() => handleDelete(transaccion)}
+                                  >
+                                    Eliminar
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </div>
