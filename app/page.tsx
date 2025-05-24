@@ -25,42 +25,33 @@ export default function Home() {
       <main className="flex-1">
         <section className="w-full py-12 md:py-24 lg:py-32 xl:py-48">
           <div className="container px-4 md:px-6">
-            <div className="grid gap-6 lg:grid-cols-2 lg:gap-12 xl:grid-cols-2">
-              <div className="flex flex-col justify-center space-y-4">
-                <div className="space-y-2">
-                  <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none">
-                    Gestiona tus finanzas personales
-                  </h1>
-                  <p className="max-w-[600px] text-gray-500 md:text-xl dark:text-gray-400">
-                    Controla tus ingresos, gastos, inversiones y establece objetivos financieros de manera sencilla e
-                    intuitiva.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-2 min-[400px]:flex-row">
-                  <Link href="/registro">
-                    <Button size="lg" className="bg-green-600 hover:bg-green-700">
-                      Comenzar Gratis
-                      <ChevronRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <Link href="/login">
-                    <Button size="lg" variant="outline">
-                      Iniciar Sesión
-                    </Button>
-                  </Link>
-                </div>
+            <div className="flex flex-col justify-center items-center text-center space-y-4 max-w-3xl mx-auto">
+              <div className="space-y-2">
+                <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none">
+                  Gestiona tus finanzas personales
+                </h1>
+                <p className="text-gray-500 md:text-xl dark:text-gray-400">
+                  Controla tus ingresos, gastos, inversiones y establece objetivos financieros de manera sencilla e
+                  intuitiva.
+                </p>
               </div>
-              <div className="flex items-center justify-center">
-                <img
-                  alt="Dashboard de finanzas"
-                  className="aspect-video overflow-hidden rounded-xl object-cover object-center"
-                  src="/placeholder.svg?height=550&width=800"
-                />
+              <div className="flex flex-col gap-2 min-[400px]:flex-row">
+                <Link href="/registro">
+                  <Button size="lg" className="bg-green-600 hover:bg-green-700">
+                    Comenzar Gratis
+                    <ChevronRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+                <Link href="/login">
+                  <Button size="lg" variant="outline">
+                    Iniciar Sesión
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
         </section>
-        <section id="caracteristicas" className="w-full py-12 md:py-24 lg:py-32 bg-gray-100 dark:bg-gray-800">
+        <section id="caracteristicas" className="w-full py-12 md:py-24 lg:py-32">
           <div className="container px-4 md:px-6">
             <div className="flex flex-col items-center justify-center space-y-4 text-center">
               <div className="space-y-2">
@@ -107,44 +98,22 @@ export default function Home() {
             </div>
           </div>
         </section>
-        <section id="acerca" className="w-full py-12 md:py-24 lg:py-32">
+        <section id="acerca" className="w-full py-12 md:py-24 lg:py-32 bg-gray-50 dark:bg-gray-900">
           <div className="container px-4 md:px-6">
             <div className="grid gap-6 lg:grid-cols-2 lg:gap-12">
               <div className="flex flex-col justify-center space-y-4">
                 <div className="space-y-2">
-                  <h2 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">Acerca del Proyecto</h2>
+                  <h2 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">Acerca de FinanzApp</h2>
                   <p className="max-w-[600px] text-gray-500 md:text-xl/relaxed dark:text-gray-400">
-                    Este proyecto fue desarrollado por estudiantes de la Universidad de Cundinamarca como parte del
-                    curso de Gestión de Proyectos centrada en los datos.
+                    FinanzApp es una aplicación diseñada para ayudarte a tomar el control de tus finanzas personales. 
+                    Con herramientas intuitivas y funciones avanzadas, podrás gestionar tu dinero de manera eficiente 
+                    y alcanzar tus metas financieras.
                   </p>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-bold">Equipo de Desarrollo</h3>
-                  <ul className="list-disc list-inside text-gray-500 dark:text-gray-400">
-                    <li>Diego Alejandro Rozo</li>
-                    <li>Orlando Contreras Suarez</li>
-                    <li>Juan David Suarez Moreno</li>
-                  </ul>
                 </div>
               </div>
               <div className="flex items-center justify-center">
-                <div className="flex flex-col space-y-4 rounded-lg border p-6 shadow-sm">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900">
-                    <PiggyBank className="h-8 w-8 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-2xl font-bold">Tecnologías Utilizadas</h3>
-                    <p className="text-gray-500 dark:text-gray-400">
-                      Este proyecto utiliza tecnologías modernas para ofrecer una experiencia de usuario óptima:
-                    </p>
-                    <ul className="list-disc list-inside text-gray-500 dark:text-gray-400">
-                      <li>Frontend: React</li>
-                      <li>Backend: Laravel y MySQL</li>
-                      <li>Control de versiones: Git y GitHub</li>
-                      <li>Deploy: Render</li>
-                      <li>Diseño: Figma para prototipos</li>
-                    </ul>
-                  </div>
+                <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900">
+                  <PiggyBank className="h-8 w-8 text-green-600 dark:text-green-400" />
                 </div>
               </div>
             </div>
@@ -153,16 +122,8 @@ export default function Home() {
       </main>
       <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          © 2025 Universidad De Cundinamarca-Sede Chía. Todos los derechos reservados.
+          © 2025 FinanzApp. Todos los derechos reservados.
         </p>
-        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          <Link href="#" className="text-xs hover:underline underline-offset-4">
-            Términos de Servicio
-          </Link>
-          <Link href="#" className="text-xs hover:underline underline-offset-4">
-            Privacidad
-          </Link>
-        </nav>
       </footer>
     </div>
   )
