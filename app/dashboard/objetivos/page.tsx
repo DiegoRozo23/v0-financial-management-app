@@ -33,15 +33,20 @@ import {
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/ui/chart"
-import { exportAsCSV, exportAsExcel, exportAsPDF, formatDataForExport } from "@/utils/export-utils"
 import { apiService, type Objetivo, type Frecuencia } from "@/services/api-service"
+
 
 // Tipo extendido para manejar objetivos con datos adicionales de progreso
 interface ObjetivoExtendido extends Objetivo {
   porcentaje: number
-  actual: number
+  actual: number // Aseguramos que 'actual' esté presente y sea numérico
   completado?: boolean
   fechaCompletado?: string
+  // Si tu tipo 'Objetivo' real del api-service incluye 'nombre', 'descripcion' y 'frecuencia',
+  // asegúrate de que estén definidos aquí también si los usas para renderizado.
+  nombre: string // Asumiendo que apiService.Objetivo tiene 'nombre'
+  frecuencia?: Frecuencia // Asumiendo que apiService.Objetivo puede tener 'frecuencia'
+  descripcion?: string // Asumiendo que apiService.Objetivo puede tener una segunda 'descripcion' (para UI)
 }
 
 export default function ObjetivosPage() {
@@ -49,15 +54,16 @@ export default function ObjetivosPage() {
   const [objetivos, setObjetivos] = useState<ObjetivoExtendido[]>([])
   const [objetivosCompletados, setObjetivosCompletados] = useState<ObjetivoExtendido[]>([])
   const [objetivoActual, setObjetivoActual] = useState<ObjetivoExtendido | null>(null)
-  const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([])
+  const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([]) // Podría ser usado por otros modelos
+  const [searchTerm, setSearchTerm] = useState("")
   const [formData, setFormData] = useState({
-    nombre: "",
-    descripcion: "",
+    nombre: "", // Este será mapeado a 'descripcion' en el backend
+    descripcion: "", // Este campo del frontend NO se enviará al backend para 'ObjetivosFinancieros'
     actual: "",
     meta: "",
-    frecuencia: "",
-    fechaInicio: new Date().toISOString().split("T")[0],
-    fechaFin: "",
+    frecuencia: { id: 0, Tipo: '' }, // Este campo del frontend NO se enviará al backend para 'ObjetivosFinancieros'
+    fechaInicio: new Date().toISOString().split("T")[0], // NO se enviará al backend para 'ObjetivosFinancieros'
+    fechaFin: "", // NO se enviará al backend para 'ObjetivosFinancieros'
   })
   const [montoAhorro, setMontoAhorro] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -79,16 +85,21 @@ export default function ObjetivosPage() {
           apiService.getFrecuencias(),
         ])
 
+        console.log("Frecuencias data received:", frecuenciasData);
+
         // Transformar objetivos para incluir campos adicionales de progreso
-        // Nota: El API no proporciona estos campos, así que se agregan con valores por defecto
         const objetivosExtendidos = objetivosData.map((objetivo) => ({
           ...objetivo,
-          actual: 0, // Valor simulado, en un caso real se calcularía basado en transacciones relacionadas
-          porcentaje: 0, // Se calcularía como (actual / meta) * 100
-          completado: false,
+          // Si tu backend NO devuelve 'nombre' pero sí 'descripcion',
+          // aquí deberías mapear objetivo.descripcion a objetivo.nombre si lo usas en el UI.
+          // Asumimos que apiService.Objetivo ya tiene 'nombre' y 'frecuencia'.
+          // Si el backend solo devuelve 'descripcion', usa objetivo.descripcion para el 'nombre' del frontend.
+          nombre: objetivo.nombre || objetivo.descripcion, // Usa nombre si existe, si no, usa descripcion
+          porcentaje: Math.round((objetivo.actual / objetivo.meta) * 100),
+          completado: (objetivo.actual >= objetivo.meta), // Determinar si está completado
         }))
 
-        // Separar en activos y completados (en este caso todos son activos)
+        // Separar en activos y completados
         setObjetivos(objetivosExtendidos.filter((obj) => !obj.completado))
         setObjetivosCompletados(objetivosExtendidos.filter((obj) => obj.completado))
         setFrecuencias(frecuenciasData)
@@ -104,12 +115,27 @@ export default function ObjetivosPage() {
   }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { id, value } = e.target
-    setFormData((prev) => ({ ...prev, [id.split("-")[0]]: value }))
+    const { id, value } = e.target;
+
+    // Ajusta los IDs para que coincidan con los nombres de las propiedades en formData
+    let fieldName = id.split("-")[0]; // 'nombre', 'meta', 'actual', 'descripcion', 'fechaInicio'
+
+    setFormData((prev) => {
+      return {
+        ...prev,
+        [fieldName]: value,
+      };
+    });
   }
 
+  // Frecuencia sigue siendo parte del formulario, pero no se enviará al backend para ObjetivosFinancieros
   const handleSelectChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, frecuencia: value }))
+    const selectedFrecuencia = frecuencias.find((f) => f.id.toString() === value);
+    if (selectedFrecuencia) {
+      setFormData((prev) => ({ ...prev, frecuencia: selectedFrecuencia }));
+    } else {
+      setFormData((prev) => ({ ...prev, frecuencia: { id: 0, Tipo: '' } }));
+    }
   }
 
   const resetForm = () => {
@@ -118,7 +144,7 @@ export default function ObjetivosPage() {
       descripcion: "",
       actual: "",
       meta: "",
-      frecuencia: "",
+      frecuencia: { id: 0, Tipo: '' },
       fechaInicio: new Date().toISOString().split("T")[0],
       fechaFin: "",
     })
@@ -127,102 +153,112 @@ export default function ObjetivosPage() {
   }
 
   const handleSubmit = async () => {
-    setIsLoading(true)
-    setError(null)
+    setIsLoading(true);
+    setError(null);
 
-    // Validación básica
-    if (!formData.nombre || !formData.meta || !formData.fechaInicio || !formData.frecuencia) {
+    // Validación según los campos que el backend espera (descripcion, meta, actual)
+    // 'nombre' del frontend se mapea a 'descripcion' del backend
+    if (!formData.nombre || !formData.meta || !formData.actual) {
       toast({
-        title: "Error",
-        description: "Por favor completa todos los campos obligatorios",
+        title: "Error de validación",
+        description: "Por favor completa el nombre, meta y monto actual del objetivo.",
         variant: "destructive",
-      })
-      setIsLoading(false)
-      return
+      });
+      setIsLoading(false);
+      return;
     }
 
     try {
-      // Obtener el objeto de frecuencia seleccionado
-      const frecuenciaSeleccionada = frecuencias.find((f) => f.id.toString() === formData.frecuencia)
-
-      if (!frecuenciaSeleccionada) {
-        throw new Error("Frecuencia no válida")
-      }
-
+      // Prepara los datos para enviar al backend
+      // Mapea 'nombre' del frontend a 'descripcion' del backend
       const dataToSave = {
-        nombre: formData.nombre,
+        descripcion: formData.nombre, // ¡Este es el cambio clave!
         meta: Number.parseFloat(formData.meta),
-        frecuencia: frecuenciaSeleccionada,
-      }
+        actual: Number.parseFloat(formData.actual || "0"), // Asegura que 'actual' sea un número, por defecto 0 si está vacío
+        // Los campos 'frecuencia', 'descripcion' (la secundaria del formulario), 'fechaInicio', 'fechaFin'
+        // NO se incluyen aquí porque el modelo ObjetivosFinancieros de Django NO los tiene.
+        // Si tu backend espera estos campos, deberás revisar el modelo de Django o el tipo 'Objetivo' en api-service.ts
+      };
 
       if (objetivoActual) {
         // Actualizar objetivo existente
-        const updatedObjetivo = await apiService.updateObjetivo(objetivoActual.id || 0, dataToSave)
+        // Asegúrate de que objetivoActual.id no sea undefined antes de llamar a la API
+        if (objetivoActual.id === undefined) {
+             throw new Error("ID del objetivo no definido para actualizar.");
+        }
+        const updatedObjetivo = await apiService.updateObjetivo(objetivoActual.id, dataToSave);
 
         // Actualizar estado local
         const updatedObjetivos = objetivos.map((obj) =>
           obj.id === objetivoActual.id
             ? {
-                ...updatedObjetivo,
-                actual: obj.actual, // Mantener el valor actual
-                porcentaje: Math.round((obj.actual / updatedObjetivo.meta) * 100),
-              }
-            : obj,
-        )
-
-        setObjetivos(updatedObjetivos)
+              ...obj, // Mantén los campos que no se envían al backend (como nombre original, frecuencia)
+              ...updatedObjetivo, // Sobreescribe con la respuesta del backend (descripcion, meta, actual)
+              nombre: formData.nombre, // Asegura que el nombre en el UI se actualice
+              porcentaje: Math.round((updatedObjetivo.actual / updatedObjetivo.meta) * 100),
+            }
+            : obj
+        );
+        setObjetivos(updatedObjetivos);
 
         toast({
           title: "Objetivo actualizado",
           description: `Se ha actualizado "${formData.nombre}" correctamente.`,
-        })
+        });
       } else {
         // Crear nuevo objetivo
-        const newObjetivo = await apiService.createObjetivo(dataToSave)
+        console.log("Data to save (create):", dataToSave);
+        const newObjetivoBackend = await apiService.createObjetivo(dataToSave); // Recibe 'descripcion', 'meta', 'actual'
 
-        // Agregar al estado local con campos adicionales
         const objetivoExtendido: ObjetivoExtendido = {
-          ...newObjetivo,
-          actual: formData.actual ? Number.parseFloat(formData.actual) : 0,
-          porcentaje: formData.actual
-            ? Math.round((Number.parseFloat(formData.actual) / Number.parseFloat(formData.meta)) * 100)
-            : 0,
-        }
+          ...newObjetivoBackend,
+          nombre: formData.nombre, // Usa el nombre del formulario para el display en el UI
+          frecuencia: frecuencias.find(f => f.id === formData.frecuencia.id), // Encuentra la frecuencia seleccionada por ID
+          porcentaje: Math.round((newObjetivoBackend.actual / newObjetivoBackend.meta) * 100),
+          completado: (newObjetivoBackend.actual >= newObjetivoBackend.meta),
+        };
 
-        setObjetivos([...objetivos, objetivoExtendido])
+        setObjetivos([...objetivos, objetivoExtendido]);
 
         toast({
           title: "Objetivo creado",
-          description: `Se ha creado "${formData.nombre}" correctamente.`,
-        })
+          description: `Se ha creado \"${formData.nombre}\" correctamente.`,
+        });
       }
     } catch (err) {
-      console.error("Error al guardar objetivo:", err)
+      console.error("Error al guardar objetivo:", err);
       toast({
         title: "Error",
         description: "No se pudo guardar el objetivo. Intente nuevamente.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsLoading(false)
-      setOpenDialog(null)
-      resetForm()
+      setIsLoading(false);
+      setOpenDialog(null);
+      resetForm();
     }
-  }
+  };
 
   const handleEdit = (objetivo: ObjetivoExtendido) => {
-    setObjetivoActual(objetivo)
+    setObjetivoActual(objetivo);
     setFormData({
-      nombre: objetivo.nombre,
-      descripcion: "",
+      nombre: objetivo.nombre, // Carga el nombre del objetivo para el campo 'nombre' del formulario
+      descripcion: objetivo.descripcion || '', // Carga la descripción del objetivo (aunque no se use al guardar)
       actual: objetivo.actual.toString(),
       meta: objetivo.meta.toString(),
-      frecuencia: objetivo.frecuencia.id.toString(),
-      fechaInicio: new Date().toISOString().split("T")[0], // Usar fecha actual como valor por defecto
-      fechaFin: "",
-    })
-    setOpenDialog("editar")
+      frecuencia: objetivo.frecuencia || { id: 0, Tipo: '' }, // Carga la frecuencia (aunque no se use al guardar)
+      fechaInicio: new Date().toISOString().split("T")[0], // Asume fecha actual o ajusta si el objetivo tiene fecha de inicio
+      fechaFin: "", // Asume vacío o ajusta
+    });
+    setOpenDialog("editar");
   }
+
+   // Function to open the "Agregar Ahorro" dialog for a specific objective
+   const handleAgregarAhorroDialog = (objetivo: ObjetivoExtendido) => {
+    setObjetivoActual(objetivo);
+    setOpenDialog("ahorro");
+  };
+
 
   const handleDelete = async (id: number) => {
     setIsLoading(true)
@@ -231,6 +267,7 @@ export default function ObjetivosPage() {
 
       // Actualizar estado local
       setObjetivos(objetivos.filter((obj) => obj.id !== id))
+      setObjetivosCompletados(objetivosCompletados.filter((obj) => obj.id !== id)) // También de completados
 
       toast({
         title: "Objetivo eliminado",
@@ -248,8 +285,8 @@ export default function ObjetivosPage() {
     }
   }
 
-  const handleAgregarAhorro = () => {
-    setIsLoading(true)
+  const handleAgregarAhorro = async () => {
+    setIsLoading(true);
 
     // Validación básica
     if (!montoAhorro || Number.parseFloat(montoAhorro) <= 0) {
@@ -257,98 +294,112 @@ export default function ObjetivosPage() {
         title: "Error",
         description: "Por favor ingresa un monto válido",
         variant: "destructive",
-      })
-      setIsLoading(false)
-      return
+      });
+      setIsLoading(false);
+      return;
     }
 
-    // Nota: Esta función es simulada ya que el API no tiene endpoint para actualizar el progreso
-    // En una implementación real, se haría una llamada a la API
-    setTimeout(() => {
-      if (objetivoActual) {
-        const monto = Number.parseFloat(montoAhorro)
-        const nuevoActual = objetivoActual.actual + monto
-        const nuevoPorcentaje = Math.min(100, Math.round((nuevoActual / objetivoActual.meta) * 100))
+    if (objetivoActual) {
+      const monto = Number.parseFloat(montoAhorro);
+      const nuevoActual = objetivoActual.actual + monto;
 
-        // Verificar si se completó el objetivo
-        if (nuevoActual >= objetivoActual.meta) {
+      try {
+        // Prepara los datos para enviar al backend (solo 'descripcion', 'meta', 'actual')
+        const dataToUpdateForBackend = {
+          descripcion: objetivoActual.nombre, // Usa el nombre actual como descripción para el backend
+          meta: objetivoActual.meta,
+          actual: nuevoActual,
+        };
+
+        // Asegúrate de que objetivoActual.id no sea undefined antes de llamar a la API
+        if (objetivoActual.id === undefined) {
+            throw new Error("ID del objetivo no definido para agregar ahorro.");
+        }
+
+        const updatedObjetivoBackend = await apiService.updateObjetivo(objetivoActual.id, dataToUpdateForBackend);
+
+        // Actualiza el estado local con la respuesta del backend
+        // Primero, intenta encontrar y actualizar en la lista de objetivos activos
+        let foundAndUpdated = false;
+        const updatedObjetivos = objetivos.map((obj) => {
+            if (obj.id === objetivoActual.id) {
+                foundAndUpdated = true;
+                return {
+                    ...obj,
+                    actual: updatedObjetivoBackend.actual, // Usa el valor 'actual' devuelto por el backend
+                    porcentaje: Math.round((updatedObjetivoBackend.actual / updatedObjetivoBackend.meta) * 100),
+                };
+            }
+            return obj;
+        });
+        setObjetivos(updatedObjetivos);
+
+         // Si no se encontró en objetivos activos, intenta en objetivos completados (aunque no debería pasar si es activo)
+        let updatedObjetivosCompletados = objetivosCompletados;
+        if (!foundAndUpdated) {
+             updatedObjetivosCompletados = objetivosCompletados.map((obj) => {
+                if (obj.id === objetivoActual.id) {
+                     return {
+                        ...obj,
+                        actual: updatedObjetivoBackend.actual,
+                        porcentaje: Math.round((updatedObjetivoBackend.actual / updatedObjetivoBackend.meta) * 100),
+                     };
+                }
+                return obj;
+             });
+             setObjetivosCompletados(updatedObjetivosCompletados);
+        }
+
+
+        toast({
+          title: "Ahorro registrado",
+          description: `Se ha agregado $${monto.toLocaleString()} a tu objetivo "${objetivoActual.nombre}".`,
+        });
+
+        // Verificar si se completó el objetivo DESPUÉS de actualizar el estado
+        // Busca el objetivo actualizado en la lista de objetivos activos
+        const latestObjetivo = updatedObjetivos.find(obj => obj.id === objetivoActual.id);
+
+        if (latestObjetivo && latestObjetivo.actual >= latestObjetivo.meta && !latestObjetivo.completado) {
           // Mover a objetivos completados
-          const fechaActual = new Date().toISOString().split("T")[0]
+          const fechaActual = new Date().toISOString().split("T")[0];
           const objetivoCompletado = {
-            ...objetivoActual,
-            actual: objetivoActual.meta,
-            porcentaje: 100,
+            ...latestObjetivo,
             completado: true,
             fechaCompletado: fechaActual,
-          }
+            porcentaje: 100, // Asegura que sea 100% al completarse
+          };
 
-          setObjetivosCompletados([...objetivosCompletados, objetivoCompletado])
-          setObjetivos(objetivos.filter((obj) => obj.id !== objetivoActual.id))
+          setObjetivosCompletados([...objetivosCompletados, objetivoCompletado]);
+          setObjetivos(updatedObjetivos.filter((obj) => obj.id !== objetivoActual.id)); // Elimina de activos
 
           toast({
             title: "¡Felicidades!",
             description: `Has completado tu objetivo "${objetivoActual.nombre}".`,
-          })
-        } else {
-          // Actualizar objetivo
-          const updatedObjetivos = objetivos.map((obj) =>
-            obj.id === objetivoActual.id
-              ? {
-                  ...obj,
-                  actual: nuevoActual,
-                  porcentaje: nuevoPorcentaje,
-                }
-              : obj,
-          )
-          setObjetivos(updatedObjetivos)
-
-          toast({
-            title: "Ahorro registrado",
-            description: `Se ha agregado $${monto.toLocaleString()} a tu objetivo "${objetivoActual.nombre}".`,
-          })
+          });
         }
-      }
 
-      setIsLoading(false)
-      setOpenDialog(null)
-      resetForm()
-    }, 600)
-  }
+      } catch (error) {
+        console.error("Error al actualizar el objetivo:", error);
+        toast({
+          title: "Error",
+          description: "No se pudo agregar el ahorro. Intenta de nuevo.",
+          variant: "destructive",
+        });
+      }
+    }
+    setIsLoading(false);
+    setOpenDialog(null);
+    resetForm();
+  };
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
   }
 
-  const handleExport = (format: "excel" | "pdf" | "csv") => {
-    setExportLoading(true)
 
-    setTimeout(() => {
-      // Combine active and completed objectives for export
-      const allObjetivos = [...objetivos, ...objetivosCompletados]
-      const dataToExport = formatDataForExport(allObjetivos, "objetivos")
-      const fileName = `objetivos_${new Date().toISOString().split("T")[0]}`
-
-      switch (format) {
-        case "excel":
-          exportAsExcel(dataToExport, fileName)
-          break
-        case "pdf":
-          exportAsPDF(dataToExport, fileName, "Reporte de Objetivos Financieros")
-          break
-        case "csv":
-          exportAsCSV(dataToExport, fileName)
-          break
-      }
-
-      setExportLoading(false)
-      toast({
-        title: "Exportación completada",
-        description: `Tus objetivos han sido exportados en formato ${format.toUpperCase()}.`,
-      })
-      setShowExportOptions(false)
-    }, 1000)
-  }
 
   // Datos para el gráfico de progreso
   const progresoData = objetivos.map((obj) => ({
@@ -357,6 +408,17 @@ export default function ObjetivosPage() {
     objetivo: obj.meta,
     porcentaje: obj.porcentaje,
   }))
+
+  // Función para filtrar objetivos
+  const filteredObjetivos = objetivos.filter(objetivo =>
+    objetivo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (objetivo.descripcion && objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase()))
+  )
+
+  const filteredObjetivosCompletados = objetivosCompletados.filter(objetivo =>
+    objetivo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (objetivo.descripcion && objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase()))
+  )
 
   if (isFetching) {
     return (
@@ -388,7 +450,7 @@ export default function ObjetivosPage() {
             onOpenChange={(open) => (open ? setOpenDialog("nuevo") : setOpenDialog(null))}
           >
             <DialogTrigger asChild>
-              <Button className="bg-green-600 hover:bg-green-700">
+              <Button className="bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700">
                 <Plus className="mr-2 h-4 w-4" />
                 Nuevo Objetivo
               </Button>
@@ -400,7 +462,7 @@ export default function ObjetivosPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="nombre-nuevo">Nombre</Label>
+                  <Label htmlFor="nombre-nuevo">Nombre del Objetivo</Label>
                   <Input
                     id="nombre-nuevo"
                     placeholder="Ej: Fondo de emergencia, Vacaciones, etc."
@@ -418,23 +480,30 @@ export default function ObjetivosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
+                {/* NOTA: El campo Frecuencia no es parte del modelo 'ObjetivosFinancieros'
+                            que proporcionaste en Django. Si es necesario para otros modelos,
+                            mantenlo, pero no se enviará para este objetivo. */}
                 <div className="grid gap-2">
-                  <Label htmlFor="frecuencia-nuevo">Frecuencia</Label>
-                  <Select value={formData.frecuencia} onValueChange={handleSelectChange}>
+                  <Label htmlFor="frecuencia-nuevo">Frecuencia </Label>
+                  <Select value={formData.frecuencia.id?.toString()} onValueChange={handleSelectChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecciona una frecuencia" />
                     </SelectTrigger>
                     <SelectContent>
-                      {frecuencias.map((frecuencia) => (
-                        <SelectItem key={frecuencia.id} value={frecuencia.id.toString()}>
-                          {frecuencia.nombre}
-                        </SelectItem>
-                      ))}
+                      {frecuencias.length > 0 ? (
+                        frecuencias.map((frecuencia) => (
+                          <SelectItem key={frecuencia.id} value={frecuencia.id.toString()}>
+                            {frecuencia.Tipo}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem disabled value="loading">Cargando...</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="actual-nuevo">Monto Actual (opcional)</Label>
+                  <Label htmlFor="actual-nuevo">Monto Actual</Label>
                   <Input
                     id="actual-nuevo"
                     type="number"
@@ -443,8 +512,20 @@ export default function ObjetivosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
+                {/* NOTA: El campo Descripción (adicional) no es parte del modelo 'ObjetivosFinancieros'
+                            que proporcionaste en Django (el 'nombre' del frontend ya es la 'descripcion' del backend).
+                            Si es necesario, el backend necesitaría un segundo campo de descripción. */}
                 <div className="grid gap-2">
-                  <Label htmlFor="fechaInicio-nuevo">Fecha Inicio</Label>
+                  <Label htmlFor="descripcion-nuevo">Descripción Adicional </Label>
+                  <Input
+                    id="descripcion-nuevo"
+                    value={formData.descripcion}
+                    onChange={handleInputChange}
+                  />
+                </div>
+                {/* NOTA: Los campos de fecha tampoco son parte del modelo 'ObjetivosFinancieros'. */}
+                <div className="grid gap-2">
+                  <Label htmlFor="fechaInicio-nuevo">Fecha Inicio </Label>
                   <Input id="fechaInicio-nuevo" type="date" value={formData.fechaInicio} onChange={handleInputChange} />
                 </div>
               </div>
@@ -465,47 +546,157 @@ export default function ObjetivosPage() {
             </DialogContent>
           </Dialog>
 
-          <div className="relative">
-            <Button
-              variant="outline"
-              onClick={() => setShowExportOptions(!showExportOptions)}
-              className="flex items-center gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Exportar
-            </Button>
-            {showExportOptions && (
-              <div className="absolute top-full right-0 mt-2 w-40 bg-background border rounded-md shadow-md z-10">
-                <div className="p-1">
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start text-sm"
-                    onClick={() => handleExport("excel")}
-                    disabled={exportLoading}
-                  >
-                    Excel
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start text-sm"
-                    onClick={() => handleExport("pdf")}
-                    disabled={exportLoading}
-                  >
-                    PDF
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start text-sm"
-                    onClick={() => handleExport("csv")}
-                    disabled={exportLoading}
-                  >
-                    CSV
-                  </Button>
+          {/* Diálogo de Editar Objetivo - Similar al de Nuevo, con los mismos ajustes */}
+          <Dialog
+            open={openDialog === "editar"}
+            onOpenChange={(open) => (open ? setOpenDialog("editar") : setOpenDialog(null))}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Editar Objetivo</DialogTitle>
+                <DialogDescription>Modifica los detalles de tu meta financiera</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="nombre-editar">Nombre del Objetivo</Label>
+                  <Input
+                    id="nombre-editar"
+                    placeholder="Ej: Fondo de emergencia, Vacaciones, etc."
+                    value={formData.nombre}
+                    onChange={handleInputChange}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="meta-editar">Monto Objetivo</Label>
+                  <Input
+                    id="meta-editar"
+                    type="number"
+                    placeholder="0.00"
+                    value={formData.meta}
+                    onChange={handleInputChange}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="frecuencia-editar">Frecuencia</Label>
+                  <Select value={formData.frecuencia.id?.toString()} onValueChange={handleSelectChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona una frecuencia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {frecuencias.length > 0 ? (
+                        frecuencias.map((frecuencia) => (
+                          <SelectItem key={frecuencia.id} value={frecuencia.id.toString()}>
+                            {frecuencia.Tipo}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem disabled value="loading">Cargando...</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="actual-editar">Monto Actual</Label>
+                  <Input
+                    id="actual-editar"
+                    type="number"
+                    placeholder="0.00"
+                    value={formData.actual}
+                    onChange={handleInputChange}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="descripcion-editar">Descripción Adicional </Label>
+                  <Input
+                    id="descripcion-editar"
+                    
+                    value={formData.descripcion}
+                    onChange={handleInputChange}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="fechaInicio-editar">Fecha Inicio</Label>
+                  <Input id="fechaInicio-editar" type="date" value={formData.fechaInicio} onChange={handleInputChange} />
                 </div>
               </div>
-            )}
-          </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOpenDialog(null)
+                    resetForm()
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button className="bg-green-600 hover:bg-green-700" onClick={handleSubmit} disabled={isLoading}>
+                  {isLoading ? "Guardando..." : "Guardar Cambios"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Diálogo para agregar ahorro - Si decides implementarlo, asegúrate de que
+              sólo actualice el campo 'actual' del objetivo en el backend. */}
+          <Dialog
+            open={openDialog === "ahorro"}
+            onOpenChange={(open) => (open ? setOpenDialog("ahorro") : setOpenDialog(null))}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Agregar Ahorro a {objetivoActual?.nombre}</DialogTitle>
+                <DialogDescription>Ingresa el monto que deseas añadir a este objetivo.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="montoAhorro">Monto a agregar</Label>
+                  <Input
+                    id="montoAhorro"
+                    type="number"
+                    placeholder="0.00"
+                    value={montoAhorro}
+                    onChange={(e) => setMontoAhorro(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setOpenDialog(null); resetForm() }}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleAgregarAhorro} disabled={isLoading}>
+                  {isLoading ? "Agregando..." : "Agregar"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+
         </div>
+      </div>
+
+      {/* Barra de búsqueda */}
+      <div className="relative">
+        <Input
+          type="text"
+          placeholder="Buscar objetivos..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-10"
+        />
+        <svg
+          className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          />
+        </svg>
       </div>
 
       {error && (
@@ -517,77 +708,46 @@ export default function ObjetivosPage() {
         </Card>
       )}
 
-      {objetivos.length > 0 && !error && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Progreso de Objetivos</CardTitle>
-            <CardDescription>Visualización del avance hacia tus metas financieras</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={progresoData}
-                  margin={{
-                    top: 20,
-                    right: 30,
-                    left: 20,
-                    bottom: 5,
-                  }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value: number, name: string) => {
-                      if (name === "porcentaje") return [`${value}%`, "Progreso"]
-                      return [`$${value.toLocaleString()}`, name === "actual" ? "Ahorrado" : "Meta"]
-                    }}
-                  />
-                  <Legend />
-                  <Bar dataKey="actual" name="Ahorrado" fill="#82ca9d" />
-                  <Bar dataKey="objetivo" name="Meta" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {objetivos.length === 0 && !error ? (
-          <Card className="md:col-span-2 lg:col-span-3">
-            <CardContent className="p-6 text-center">
-              <div className="text-muted-foreground py-12">
-                <Target className="mx-auto h-12 w-12 mb-4" />
-                <p className="text-lg">No tienes objetivos financieros registrados</p>
-                <p className="mb-4">Crea tu primer objetivo para comenzar a ahorrar</p>
-                <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog("nuevo")}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Crear Objetivo
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          objetivos.map((objetivo) => (
-            <Card key={objetivo.id} className="overflow-hidden">
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start">
+      {filteredObjetivos.length > 0 && !error && (
+        <div className="space-y-4">
+          {filteredObjetivos.map((objetivo) => (
+            <Card key={objetivo.id!} className="overflow-hidden">
+              <CardContent className="p-6">
+                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <CardTitle>{objetivo.nombre}</CardTitle>
-                    <CardDescription className="mt-1">Frecuencia: {objetivo.frecuencia.nombre}</CardDescription>
+                    <h3 className="font-semibold text-lg">{objetivo.nombre}</h3>
+                    {objetivo.descripcion && objetivo.descripcion !== objetivo.nombre && (
+                      <p className="text-sm text-muted-foreground mt-1">{objetivo.descripcion}</p>
+                    )}
                   </div>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(objetivo)}>
-                      <Edit className="h-4 w-4" />
-                      <span className="sr-only">Editar</span>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleAgregarAhorroDialog(objetivo)}
+                      className="text-green-600 dark:text-green-400 border-green-600 dark:border-green-400 hover:bg-green-50 dark:hover:bg-green-950 bg-background"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Agregar
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleEdit(objetivo)}
+                      className="text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 bg-background"
+                    >
+                      <Edit className="h-4 w-4 mr-1" />
+                      Editar
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 dark:text-red-400">
-                          <Trash2 className="h-4 w-4" />
-                          <span className="sr-only">Eliminar</span>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Eliminar
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
@@ -610,137 +770,146 @@ export default function ObjetivosPage() {
                     </AlertDialog>
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent className="pb-2">
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-muted-foreground">Progreso</div>
-                    <div className="text-sm font-medium">{objetivo.porcentaje}%</div>
+
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium">
+                        Progreso: ${objetivo.actual?.toLocaleString()} de ${objetivo.meta?.toLocaleString()}
+                      </span>
+                      <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                        {objetivo.porcentaje}%
+                      </span>
+                    </div>
+                    <Progress 
+                      value={objetivo.porcentaje} 
+                      className="h-3 bg-gray-100 dark:bg-gray-800" 
+                    />
                   </div>
-                  <Progress value={objetivo.porcentaje} className="h-2" />
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-muted-foreground">Ahorrado</div>
-                    <div className="text-sm font-medium">${objetivo.actual.toLocaleString()}</div>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-muted-foreground">Meta</div>
-                    <div className="text-sm font-medium">${objetivo.meta.toLocaleString()}</div>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-muted-foreground">Falta</div>
-                    <div className="text-sm font-medium">${(objetivo.meta - objetivo.actual).toLocaleString()}</div>
+
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                      <p className="text-muted-foreground">Meta</p>
+                      <p className="font-semibold text-lg">${objetivo.meta?.toLocaleString()}</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                      <p className="text-muted-foreground">Falta</p>
+                      <p className="font-semibold text-lg text-orange-600 dark:text-orange-400">
+                        ${(objetivo.meta - objetivo.actual).toLocaleString()}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
-              <div className="p-6 pt-0">
-                <Button
-                  className="w-full bg-green-600 hover:bg-green-700"
-                  onClick={() => {
-                    setObjetivoActual(objetivo)
-                    setOpenDialog("ahorro")
-                  }}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Agregar Ahorro
-                </Button>
-              </div>
             </Card>
-          ))
-        )}
-        {objetivos.length > 0 && !error && (
-          <Card className="flex flex-col items-center justify-center p-6 border-dashed">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
-                <Target className="h-6 w-6" />
-              </div>
-              <h3 className="text-lg font-medium mb-2">Crear nuevo objetivo</h3>
-              <p className="text-sm text-muted-foreground mb-4">Establece una nueva meta financiera para ahorrar</p>
-              <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog("nuevo")}>
-                <Plus className="mr-2 h-4 w-4" />
-                Crear Objetivo
-              </Button>
-            </div>
-          </Card>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
-      <Dialog
-        open={openDialog === "ahorro"}
-        onOpenChange={(open) => (open ? setOpenDialog("ahorro") : setOpenDialog(null))}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Agregar Ahorro</DialogTitle>
-            <DialogDescription>Agrega un nuevo ahorro a tu objetivo "{objetivoActual?.nombre}"</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="monto-ahorro">Monto</Label>
-              <Input
-                id="monto-ahorro"
-                type="number"
-                placeholder="0.00"
-                value={montoAhorro}
-                onChange={(e) => setMontoAhorro(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Progreso actual:</span>
-                <span>{objetivoActual?.porcentaje}%</span>
-              </div>
-              <Progress value={objetivoActual?.porcentaje} className="h-2" />
-              <div className="flex justify-between text-sm">
-                <span>Ahorrado: ${objetivoActual?.actual.toLocaleString()}</span>
-                <span>Meta: ${objetivoActual?.meta.toLocaleString()}</span>
-              </div>
-            </div>
+      {/* Mostrar mensaje cuando no hay resultados de búsqueda */}
+      {searchTerm && filteredObjetivos.length === 0 && filteredObjetivosCompletados.length === 0 && !error && (
+        <Card className="p-6 text-center">
+          <div className="text-muted-foreground">
+            <p className="text-lg">No se encontraron objetivos que coincidan con "{searchTerm}"</p>
           </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setOpenDialog(null)
-                resetForm()
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button className="bg-green-600 hover:bg-green-700" onClick={handleAgregarAhorro} disabled={isLoading}>
-              {isLoading ? "Guardando..." : "Agregar Ahorro"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </Card>
+      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Objetivos Completados</CardTitle>
-          <CardDescription>Metas financieras que has alcanzado</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {objetivosCompletados.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">Aún no has completado ningún objetivo</div>
-          ) : (
-            <div className="space-y-4">
-              {objetivosCompletados.map((objetivo) => (
-                <div key={objetivo.id} className="flex items-center gap-4 p-4 border rounded-lg">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
-                    <Check className="h-5 w-5 text-green-600 dark:text-green-400" />
+      {/* Mostrar mensaje cuando no hay objetivos en general */}
+      {objetivos.length === 0 && objetivosCompletados.length === 0 && !searchTerm && !error && (
+        <Card className="p-6 text-center">
+          <div className="text-muted-foreground py-12">
+            <Target className="mx-auto h-12 w-12 mb-4" />
+            <p className="text-lg">No tienes objetivos financieros registrados</p>
+            <p className="mb-4">Crea tu primer objetivo para comenzar a ahorrar</p>
+            <Button 
+              className="bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700" 
+              onClick={() => setOpenDialog("nuevo")}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Crear Objetivo
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Objetivos completados */}
+      {filteredObjetivosCompletados.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-bold tracking-tight mb-4">Objetivos Completados</h2>
+          <div className="space-y-4">
+            {filteredObjetivosCompletados.map((objetivo) => (
+              <Card key={objetivo.id!} className="overflow-hidden border-green-500">
+                <CardContent className="p-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="font-semibold text-lg flex items-center">
+                        {objetivo.nombre}
+                        <Check className="h-5 w-5 text-green-500 ml-2" />
+                      </h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Completado el: {objetivo.fechaCompletado ? formatDate(objetivo.fechaCompletado) : 'N/A'}
+                      </p>
+                    </div>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Eliminar
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo completado.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-600 hover:bg-red-700"
+                            onClick={() => handleDelete(objetivo.id || 0)}
+                          >
+                            Eliminar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-medium">{objetivo.nombre}</h4>
-                    <p className="text-xs text-muted-foreground">
-                      Completado el {objetivo.fechaCompletado ? formatDate(objetivo.fechaCompletado) : "N/A"}
-                    </p>
+
+                  <div className="space-y-6">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm font-medium">Meta alcanzada</span>
+                        <span className="text-sm font-semibold text-green-600">100%</span>
+                      </div>
+                      <Progress value={100} className="h-3 bg-gray-100" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                        <p className="text-muted-foreground">Meta alcanzada</p>
+                        <p className="font-semibold text-lg">${objetivo.meta?.toLocaleString()}</p>
+                      </div>
+                      <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                        <p className="text-muted-foreground">Ahorrado</p>
+                        <p className="font-semibold text-lg text-green-600 dark:text-green-400">
+                          ${objetivo.actual?.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-sm font-medium">${objetivo.meta.toLocaleString()}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

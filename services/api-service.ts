@@ -6,21 +6,21 @@ const API_URL = "https://finanzasapi-c7or.onrender.com"
 // Interfaces para los tipos de datos
 export interface Ingreso {
   id?: number
-  monto: number
+  cantidad: number
   fecha: string
   descripcion: string
 }
 
 export interface Gasto {
   id?: number
-  monto: number
+  cantidad: number
   fecha: string
   descripcion: string
 }
 
 export interface Ahorro {
   id?: number
-  monto: number
+  cantidad: number
   fecha: string
   descripcion: string
   nombre: string
@@ -29,84 +29,103 @@ export interface Ahorro {
 
 export interface GastoFijo {
   id?: number
-  monto: number
+  cantidad: number
   fecha: string
   descripcion: string
+  frecuencia: number // ID de la frecuencia
 }
 
 export interface Frecuencia {
   id: number
-  nombre: string
+  Tipo: string
 }
 
 export interface Objetivo {
   id?: number
   nombre: string
   meta: number
-  frecuencia: Frecuencia
+  frecuencia: Frecuencia;
+  descripcion: string; // Added descripcion
+  actual: number; // Added actual
 }
 
 // Servicio API genérico
 export const apiService = {
   // Método para realizar solicitudes autenticadas
   async fetchWithAuth(endpoint: string, options: RequestInit = {}): Promise<any> {
-    let accessToken = authService.getAccessToken()
+    const token = authService.getAccessToken()
+    
+    if (!token) {
+      console.error("No hay token de acceso")
+      throw new Error("No autenticado - Token no disponible")
+    }
 
-    // Si no hay token, intentar refrescar
-    if (!accessToken) {
-      accessToken = await authService.refreshToken()
-      if (!accessToken) {
-        throw new Error("No autenticado")
+    console.log("Token actual:", token) // Debug: mostrar token
+
+    const defaultOptions: RequestInit = {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    }
+
+    const finalOptions = {
+      ...defaultOptions,
+      ...options,
+      headers: {
+        ...defaultOptions.headers,
+        ...options.headers,
+      },
+    }
+
+    console.log("Realizando petición a:", `${API_URL}${endpoint}`)
+    console.log("Opciones de la petición:", {
+      ...finalOptions,
+      headers: {
+        ...finalOptions.headers,
+        Authorization: `Bearer ${token.substring(0, 10)}...` // Solo mostrar parte del token por seguridad
       }
-    }
-
-    // Configurar headers con el token
-    const headers = {
-      ...options.headers,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    }
+    })
 
     try {
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        ...options,
-        headers,
+      const response = await fetch(`${API_URL}${endpoint}`, finalOptions)
+      let data
+      
+      try {
+        data = await response.json()
+      } catch (e) {
+        console.log("No se pudo parsear la respuesta como JSON:", e)
+        if (response.status === 204) {
+          return null // No content
+        }
+        throw new Error(`Error al parsear respuesta: ${response.statusText}`)
+      }
+
+      console.log("Respuesta del servidor:", {
+        status: response.status,
+        statusText: response.statusText,
+        data
       })
 
-      // Si el token expiró (401), intentar refrescar y reintentar
-      if (response.status === 401) {
-        const newToken = await authService.refreshToken()
-        if (newToken) {
-          // Reintentar con el nuevo token
-          return this.fetchWithAuth(endpoint, options)
-        } else {
-          // Si no se pudo refrescar, cerrar sesión
-          authService.logout()
-          throw new Error("Sesión expirada")
-        }
-      }
-
-      if (response.status === 204) {
-        // No content - normalmente en operaciones DELETE exitosas
-        return null
-      }
-
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(data.detail || "Error en la solicitud")
+        throw new Error(
+          `Error en la solicitud: ${response.status} ${response.statusText}\nDetalle: ${JSON.stringify(data)}`
+        )
       }
 
       return data
     } catch (error) {
-      console.error(`Error en solicitud a ${endpoint}:`, error)
+      console.error("Error completo en fetchWithAuth:", error)
       throw error
     }
   },
 
   // INGRESOS
   async getIngresos(): Promise<Ingreso[]> {
-    return this.fetchWithAuth("/api/finanzas/ingresos/")
+    console.log("Solicitando ingresos...")
+    const data = await this.fetchWithAuth("/api/finanzas/ingresos/")
+    console.log("Respuesta de ingresos:", data)
+    return data
   },
 
   async createIngreso(data: Omit<Ingreso, "id">): Promise<Ingreso> {
@@ -131,7 +150,10 @@ export const apiService = {
 
   // GASTOS
   async getGastos(): Promise<Gasto[]> {
-    return this.fetchWithAuth("/api/finanzas/gastos/")
+    console.log("Solicitando gastos...")
+    const data = await this.fetchWithAuth("/api/finanzas/gastos/")
+    console.log("Respuesta de gastos:", data)
+    return data
   },
 
   async createGasto(data: Omit<Gasto, "id">): Promise<Gasto> {
@@ -232,5 +254,12 @@ export const apiService = {
     return this.fetchWithAuth(`/api/finanzas/objetivo/${id}/`, {
       method: "DELETE",
     })
+  },
+
+  async addAhorroObjetivo(objetivoId: number, monto: number, fecha: string): Promise<any> {
+    return this.fetchWithAuth(`/api/finanzas/objetivo/${objetivoId}/ahorro/`, {
+      method: "POST",
+      body: JSON.stringify({ monto, fecha }),
+    });
   },
 }

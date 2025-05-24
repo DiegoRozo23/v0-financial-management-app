@@ -45,18 +45,18 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { exportAsCSV, exportAsExcel, exportAsPDF, formatDataForExport } from "@/utils/export-utils"
-import { apiService, type Ingreso, type Gasto } from "@/services/api-service"
+import { apiService, type Ingreso, type Gasto, type GastoFijo, type Frecuencia } from "@/services/api-service"
 
 // Interfaz unificada para mostrar transacciones
 interface Transaccion {
   id: string
   tipo: "ingreso" | "gasto"
-  concepto: string
-  monto: number
+  descripcion: string
+  cantidad: number
   fecha: string
-  categoria: string
-  originalId: number
+  originalId: number | undefined
+  esGastoFijo: boolean
+  frecuencia?: number
 }
 
 export default function IngresosGastosPage() {
@@ -70,11 +70,13 @@ export default function IngresosGastosPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
   const [transaccionActual, setTransaccionActual] = useState<Transaccion | null>(null)
+  const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([])
   const [formData, setFormData] = useState({
-    concepto: "",
-    monto: "",
-    categoria: "",
+    descripcion: "",
+    cantidad: "",
     fecha: new Date().toISOString().split("T")[0],
+    esGastoFijo: false,
+    frecuencia: ""
   })
   const [isLoading, setIsLoading] = useState(false)
   const [isFetching, setIsFetching] = useState(true)
@@ -89,32 +91,46 @@ export default function IngresosGastosPage() {
       setError(null)
 
       try {
-        // Obtener datos de ingresos y gastos en paralelo
-        const [ingresosData, gastosData] = await Promise.all([apiService.getIngresos(), apiService.getGastos()])
+        // Obtener datos de ingresos, gastos y gastos fijos en paralelo
+        const [ingresosData, gastosData, gastosFijosData] = await Promise.all([
+          apiService.getIngresos(), 
+          apiService.getGastos(),
+          apiService.getGastosFijos()
+        ])
 
         // Transformar a formato unificado
         const ingresosFormateados: Transaccion[] = ingresosData.map((ingreso) => ({
           id: `ingreso-${ingreso.id}`,
           tipo: "ingreso",
-          concepto: ingreso.descripcion,
-          monto: ingreso.monto,
+          descripcion: ingreso.descripcion || '',
+          cantidad: ingreso.cantidad,
           fecha: ingreso.fecha,
-          categoria: "Ingreso",
-          originalId: ingreso.id || 0,
+          originalId: ingreso.id,
+          esGastoFijo: false,
         }))
 
         const gastosFormateados: Transaccion[] = gastosData.map((gasto) => ({
           id: `gasto-${gasto.id}`,
           tipo: "gasto",
-          concepto: gasto.descripcion,
-          monto: gasto.monto,
+          descripcion: gasto.descripcion,
+          cantidad: gasto.cantidad,
           fecha: gasto.fecha,
-          categoria: "Gasto",
-          originalId: gasto.id || 0,
+          originalId: gasto.id,
+          esGastoFijo: false,
+        }))
+
+        const gastosFijosFormateados: Transaccion[] = gastosFijosData.map((gastoFijo) => ({
+          id: `gasto-fijo-${gastoFijo.id}`,
+          tipo: "gasto",
+          descripcion: gastoFijo.descripcion,
+          cantidad: gastoFijo.cantidad,
+          fecha: gastoFijo.fecha,
+          originalId: gastoFijo.id,
+          esGastoFijo: true,
         }))
 
         // Combinar y ordenar por fecha (más reciente primero)
-        const todasTransacciones = [...ingresosFormateados, ...gastosFormateados].sort(
+        const todasTransacciones = [...ingresosFormateados, ...gastosFormateados, ...gastosFijosFormateados].sort(
           (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
         )
 
@@ -130,42 +146,52 @@ export default function IngresosGastosPage() {
     fetchData()
   }, [])
 
+  // Cargar frecuencias al montar el componente
+  useEffect(() => {
+    const fetchFrecuencias = async () => {
+      try {
+        const data = await apiService.getFrecuencias()
+        setFrecuencias(data)
+      } catch (err) {
+        console.error("Error al cargar frecuencias:", err)
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar las frecuencias.",
+          variant: "destructive",
+        })
+      }
+    }
+
+    fetchFrecuencias()
+  }, [])
+
   const filteredTransacciones = transacciones
-    .filter((t) => (activeTab === "todos" ? true : t.tipo === activeTab))
+    .filter((t) => {
+      if (activeTab === "todos") return true;
+      if (activeTab === "ingreso") return t.tipo === "ingreso";
+      if (activeTab === "gasto") return t.tipo === "gasto" && !t.esGastoFijo;
+      if (activeTab === "gasto-fijo") return t.tipo === "gasto" && t.esGastoFijo;
+      return true;
+    })
     .filter(
       (t) =>
         searchTerm === "" ||
-        t.concepto.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        t.categoria.toLowerCase().includes(searchTerm.toLowerCase()),
+        t.descripcion.toLowerCase().includes(searchTerm.toLowerCase()),
     )
 
-  const categoriasIngresos = ["Trabajo", "Inversiones", "Regalos", "Otros"]
-  const categoriasGastos = [
-    "Alimentación",
-    "Vivienda",
-    "Transporte",
-    "Entretenimiento",
-    "Servicios",
-    "Compras",
-    "Salud",
-    "Otros",
-  ]
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { id, value } = e.target
-    setFormData((prev) => ({ ...prev, [id.split("-")[0]]: value }))
-  }
-
-  const handleSelectChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, categoria: value }))
+    const fieldName = id.split("-")[0] // 'descripcion', 'cantidad', 'fecha', 'frecuencia'
+    setFormData(prev => ({ ...prev, [fieldName]: value }))
   }
 
   const resetForm = () => {
     setFormData({
-      concepto: "",
-      monto: "",
-      categoria: "",
+      descripcion: "",
+      cantidad: "",
       fecha: new Date().toISOString().split("T")[0],
+      esGastoFijo: false,
+      frecuencia: ""
     })
     setTransaccionActual(null)
   }
@@ -174,11 +200,31 @@ export default function IngresosGastosPage() {
     setIsLoading(true)
     setError(null)
 
-    // Validación básica
-    if (!formData.concepto || !formData.monto || !formData.fecha) {
+    if (!formData.cantidad || !formData.fecha) {
       toast({
         title: "Error",
-        description: "Por favor completa todos los campos",
+        description: "Por favor completa la cantidad y la fecha.",
+        variant: "destructive",
+      })
+      setIsLoading(false)
+      return
+    }
+
+    if ((openDialog === "gasto" || transaccionActual) && !formData.descripcion) {
+      toast({
+        title: "Error",
+        description: "Por favor completa la descripción.",
+        variant: "destructive",
+      })
+      setIsLoading(false)
+      return
+    }
+
+    // Validar frecuencia para todos los gastos
+    if (openDialog === "gasto" && !formData.frecuencia) {
+      toast({
+        title: "Error",
+        description: "Por favor selecciona una frecuencia para el gasto.",
         variant: "destructive",
       })
       setIsLoading(false)
@@ -188,26 +234,35 @@ export default function IngresosGastosPage() {
     try {
       if (transaccionActual) {
         // Actualizar transacción existente
-        const dataToUpdate = {
-          descripcion: formData.concepto,
-          monto: Number.parseFloat(formData.monto),
+        const commonUpdateData = {
+          descripcion: formData.descripcion.trim(),
+          cantidad: Number.parseFloat(formData.cantidad),
           fecha: formData.fecha,
+          ...(formData.esGastoFijo ? { frecuencia: Number(formData.frecuencia) } : {})
         }
 
         if (transaccionActual.tipo === "ingreso") {
-          await apiService.updateIngreso(transaccionActual.originalId, dataToUpdate as Ingreso)
+          await apiService.updateIngreso(transaccionActual.originalId || 0, commonUpdateData as Ingreso)
         } else {
-          await apiService.updateGasto(transaccionActual.originalId, dataToUpdate as Gasto)
+          if (formData.esGastoFijo) {
+            await apiService.updateGastoFijo(transaccionActual.originalId || 0, {
+              ...commonUpdateData,
+              frecuencia: Number(formData.frecuencia)
+            } as GastoFijo)
+          } else {
+            await apiService.updateGasto(transaccionActual.originalId || 0, commonUpdateData as Gasto)
+          }
         }
 
-        // Actualizar estado local
         const updatedTransacciones = transacciones.map((t) =>
           t.id === transaccionActual.id
             ? {
                 ...t,
-                concepto: formData.concepto,
-                monto: Number.parseFloat(formData.monto),
+                descripcion: formData.descripcion.trim(),
+                cantidad: Number.parseFloat(formData.cantidad),
                 fecha: formData.fecha,
+                esGastoFijo: formData.esGastoFijo,
+                frecuencia: formData.esGastoFijo ? Number(formData.frecuencia) : undefined
               }
             : t,
         )
@@ -215,47 +270,73 @@ export default function IngresosGastosPage() {
 
         toast({
           title: "Transacción actualizada",
-          description: `Se ha actualizado "${formData.concepto}" correctamente.`,
+          description: `Se ha actualizado correctamente.`,
         })
       } else {
-        // Crear nueva transacción
-        const newData = {
-          descripcion: formData.concepto,
-          monto: Number.parseFloat(formData.monto),
+        let newTransaccion: Transaccion
+        let createdItem
+
+        const commonCreateData = {
+          descripcion: formData.descripcion.trim(),
+          cantidad: Number.parseFloat(formData.cantidad),
           fecha: formData.fecha,
         }
 
-        let newTransaccion: Transaccion
-
         if (openDialog === "ingreso") {
-          const createdIngreso = await apiService.createIngreso(newData as Ingreso)
+          createdItem = await apiService.createIngreso(commonCreateData as Ingreso)
           newTransaccion = {
-            id: `ingreso-${createdIngreso.id}`,
+            id: `ingreso-${createdItem.id}`,
             tipo: "ingreso",
-            concepto: createdIngreso.descripcion,
-            monto: createdIngreso.monto,
-            fecha: createdIngreso.fecha,
-            categoria: "Ingreso",
-            originalId: createdIngreso.id || 0,
+            descripcion: createdItem.descripcion || formData.descripcion.trim(),
+            cantidad: createdItem.cantidad,
+            fecha: createdItem.fecha,
+            originalId: createdItem.id,
+            esGastoFijo: false
           }
         } else {
-          const createdGasto = await apiService.createGasto(newData as Gasto)
-          newTransaccion = {
-            id: `gasto-${createdGasto.id}`,
-            tipo: "gasto",
-            concepto: createdGasto.descripcion,
-            monto: createdGasto.monto,
-            fecha: createdGasto.fecha,
-            categoria: "Gasto",
-            originalId: createdGasto.id || 0,
+          if (formData.esGastoFijo) {
+            const gastoFijoData = {
+              ...commonCreateData,
+              frecuencia: Number(formData.frecuencia)
+            }
+            createdItem = await apiService.createGastoFijo(gastoFijoData as GastoFijo)
+            newTransaccion = {
+              id: `gasto-fijo-${createdItem.id}`,
+              tipo: "gasto",
+              descripcion: createdItem.descripcion,
+              cantidad: createdItem.cantidad,
+              fecha: createdItem.fecha,
+              originalId: createdItem.id,
+              esGastoFijo: true,
+              frecuencia: Number(formData.frecuencia)
+            }
+          } else {
+            const gastoData = {
+              ...commonCreateData,
+              frecuencia: Number(formData.frecuencia)
+            }
+            createdItem = await apiService.createGasto(gastoData as Gasto)
+            newTransaccion = {
+              id: `gasto-${createdItem.id}`,
+              tipo: "gasto",
+              descripcion: createdItem.descripcion,
+              cantidad: createdItem.cantidad,
+              fecha: createdItem.fecha,
+              originalId: createdItem.id,
+              esGastoFijo: false,
+              frecuencia: Number(formData.frecuencia)
+            }
           }
         }
 
-        setTransacciones([newTransaccion, ...transacciones])
+        const updatedTransacciones = [newTransaccion, ...transacciones].sort(
+          (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+        )
+        setTransacciones(updatedTransacciones)
 
         toast({
           title: "Transacción creada",
-          description: `Se ha registrado "${formData.concepto}" correctamente.`,
+          description: `Se ha registrado correctamente.`,
         })
       }
     } catch (err) {
@@ -275,10 +356,11 @@ export default function IngresosGastosPage() {
   const handleEdit = (transaccion: Transaccion) => {
     setTransaccionActual(transaccion)
     setFormData({
-      concepto: transaccion.concepto,
-      monto: transaccion.monto.toString(),
-      categoria: transaccion.categoria,
+      descripcion: transaccion.descripcion,
+      cantidad: transaccion.cantidad.toString(),
       fecha: transaccion.fecha,
+      esGastoFijo: transaccion.esGastoFijo,
+      frecuencia: transaccion.frecuencia?.toString() || ""
     })
     setOpenDialog("editar")
   }
@@ -286,6 +368,9 @@ export default function IngresosGastosPage() {
   const handleDelete = async (transaccion: Transaccion) => {
     setIsLoading(true)
     try {
+        if (transaccion.originalId === undefined) {
+            throw new Error("Transaction ID is undefined, cannot delete.");
+        }
       if (transaccion.tipo === "ingreso") {
         await apiService.deleteIngreso(transaccion.originalId)
       } else {
@@ -316,47 +401,10 @@ export default function IngresosGastosPage() {
     return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
   }
 
-  const handleExport = (format: "excel" | "pdf" | "csv") => {
-    setExportLoading(true)
-
-    setTimeout(() => {
-      const dataToExport = formatDataForExport(
-        filteredTransacciones.map((t) => ({
-          tipo: t.tipo,
-          concepto: t.concepto,
-          categoria: t.categoria,
-          fecha: t.fecha,
-          monto: t.monto,
-        })),
-        "ingresos-gastos",
-      )
-      const fileName = `transacciones_${new Date().toISOString().split("T")[0]}`
-
-      switch (format) {
-        case "excel":
-          exportAsExcel(dataToExport, fileName)
-          break
-        case "pdf":
-          exportAsPDF(dataToExport, fileName, "Reporte de Ingresos y Gastos")
-          break
-        case "csv":
-          exportAsCSV(dataToExport, fileName)
-          break
-      }
-
-      setExportLoading(false)
-      toast({
-        title: "Exportación completada",
-        description: `Tus transacciones han sido exportadas en formato ${format.toUpperCase()}.`,
-      })
-      setShowExportOptions(false)
-    }, 1000)
-  }
 
   // Calcular totales
-  const totalIngresos = transacciones.filter((t) => t.tipo === "ingreso").reduce((sum, t) => sum + t.monto, 0)
-
-  const totalGastos = transacciones.filter((t) => t.tipo === "gasto").reduce((sum, t) => sum + t.monto, 0)
+  const totalIngresos = transacciones.filter((t) => t.tipo === "ingreso").reduce((sum, t) => sum + t.cantidad, 0)
+  const totalGastos = transacciones.filter((t) => t.tipo === "gasto").reduce((sum, t) => sum + t.cantidad, 0)
 
   const balance = totalIngresos - totalGastos
 
@@ -369,6 +417,7 @@ export default function IngresosGastosPage() {
           <p className="text-muted-foreground">Administra tus transacciones financieras.</p>
         </div>
         <div className="flex gap-2">
+          {/* Dialog for New Ingreso */}
           <Dialog
             open={openDialog === "ingreso"}
             onOpenChange={(open) => (open ? setOpenDialog("ingreso") : setOpenDialog(null))}
@@ -386,21 +435,22 @@ export default function IngresosGastosPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="concepto-ingreso">Concepto</Label>
-                  <Input
-                    id="concepto-ingreso"
-                    placeholder="Ej: Salario, Freelance, etc."
-                    value={formData.concepto}
-                    onChange={handleInputChange}
-                  />
-                </div>
+                   {/* Descripción para Ingreso (Opcional en frontend, el backend la ignorará si no se actualiza el serializer) */}
+                   <Label htmlFor="descripcion-ingreso">Descripción (Opcional)</Label>
+                   <Input
+                     id="descripcion-ingreso"
+                     placeholder="Ej: Salario, Freelance, etc."
+                     value={formData.descripcion}
+                     onChange={handleInputChange}
+                   />
+                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="monto-ingreso">Monto</Label>
+                  <Label htmlFor="cantidad-ingreso">Cantidad</Label>
                   <Input
-                    id="monto-ingreso"
+                    id="cantidad-ingreso"
                     type="number"
                     placeholder="0.00"
-                    value={formData.monto}
+                    value={formData.cantidad}
                     onChange={handleInputChange}
                   />
                 </div>
@@ -429,6 +479,7 @@ export default function IngresosGastosPage() {
             </DialogContent>
           </Dialog>
 
+          {/* Dialog for New Gasto */}
           <Dialog
             open={openDialog === "gasto"}
             onOpenChange={(open) => (open ? setOpenDialog("gasto") : setOpenDialog(null))}
@@ -446,30 +497,66 @@ export default function IngresosGastosPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="concepto-gasto">Concepto</Label>
+                  <Label htmlFor="descripcion-gasto">Descripción</Label>
                   <Input
-                    id="concepto-gasto"
+                    id="descripcion-gasto"
                     placeholder="Ej: Supermercado, Restaurante, etc."
-                    value={formData.concepto}
+                    value={formData.descripcion}
                     onChange={handleInputChange}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="monto-gasto">Monto</Label>
+                  <Label htmlFor="cantidad-gasto">Cantidad</Label>
                   <Input
-                    id="monto-gasto"
+                    id="cantidad-gasto"
                     type="number"
                     placeholder="0.00"
-                    value={formData.monto}
+                    value={formData.cantidad}
                     onChange={handleInputChange}
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="fecha-gasto">Fecha</Label>
                   <div className="relative">
-                    <Input id="fecha-gasto" type="date" value={formData.fecha} onChange={handleInputChange} />
+                    <Input 
+                      id="fecha-gasto" 
+                      type="date" 
+                      value={formData.fecha || new Date().toISOString().split("T")[0]}
+                      onChange={handleInputChange} 
+                    />
                     <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
                   </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="tipo-gasto">Tipo de Gasto</Label>
+                  <select
+                    id="tipo-gasto"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formData.esGastoFijo ? "fijo" : "variable"}
+                    onChange={(e) => setFormData(prev => ({ ...prev, esGastoFijo: e.target.value === "fijo" }))}
+                    required
+                  >
+                    <option value="">Selecciona el tipo de gasto</option>
+                    <option value="fijo">Gasto Fijo</option>
+                    <option value="variable">Gasto Variable</option>
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="frecuencia-gasto">Frecuencia</Label>
+                  <select
+                    id="frecuencia-gasto"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formData.frecuencia}
+                    onChange={(e) => setFormData(prev => ({ ...prev, frecuencia: e.target.value }))}
+                    required
+                  >
+                    <option value="">Selecciona la frecuencia</option>
+                    {frecuencias.map((freq) => (
+                      <option key={freq.id} value={freq.id}>
+                        {freq.Tipo}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <DialogFooter>
@@ -489,6 +576,7 @@ export default function IngresosGastosPage() {
             </DialogContent>
           </Dialog>
 
+          {/* Dialog for Edit Transaction - Ahora permite editar descripción para ambos */}
           <Dialog
             open={openDialog === "editar"}
             onOpenChange={(open) => (open ? setOpenDialog("editar") : setOpenDialog(null))}
@@ -499,22 +587,23 @@ export default function IngresosGastosPage() {
                 <DialogDescription>Modifica los detalles de la transacción</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
+                {/* Campo de descripción siempre visible para edición */}
                 <div className="grid gap-2">
-                  <Label htmlFor="concepto-editar">Concepto</Label>
+                  <Label htmlFor="descripcion-editar">Descripción</Label>
                   <Input
-                    id="concepto-editar"
-                    placeholder="Concepto"
-                    value={formData.concepto}
+                    id="descripcion-editar"
+                    placeholder="Descripción"
+                    value={formData.descripcion}
                     onChange={handleInputChange}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="monto-editar">Monto</Label>
+                  <Label htmlFor="cantidad-editar">Cantidad</Label>
                   <Input
-                    id="monto-editar"
+                    id="cantidad-editar"
                     type="number"
                     placeholder="0.00"
-                    value={formData.monto}
+                    value={formData.cantidad}
                     onChange={handleInputChange}
                   />
                 </div>
@@ -612,6 +701,7 @@ export default function IngresosGastosPage() {
               <TabsTrigger value="todos">Todos</TabsTrigger>
               <TabsTrigger value="ingreso">Ingresos</TabsTrigger>
               <TabsTrigger value="gasto">Gastos</TabsTrigger>
+              <TabsTrigger value="gasto-fijo">Gastos Fijos</TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="flex gap-2 w-full sm:w-auto">
@@ -629,46 +719,7 @@ export default function IngresosGastosPage() {
               <Filter className="h-4 w-4" />
               <span className="sr-only">Filtrar</span>
             </Button>
-            <div className="relative">
-              <Button
-                variant="outline"
-                onClick={() => setShowExportOptions(!showExportOptions)}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                Exportar
-              </Button>
-              {showExportOptions && (
-                <div className="absolute top-full right-0 mt-2 w-40 bg-background border rounded-md shadow-md z-10">
-                  <div className="p-1">
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start text-sm"
-                      onClick={() => handleExport("excel")}
-                      disabled={exportLoading}
-                    >
-                      Excel
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start text-sm"
-                      onClick={() => handleExport("pdf")}
-                      disabled={exportLoading}
-                    >
-                      PDF
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start text-sm"
-                      onClick={() => handleExport("csv")}
-                      disabled={exportLoading}
-                    >
-                      CSV
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+
           </div>
         </div>
 
@@ -691,17 +742,16 @@ export default function IngresosGastosPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Tipo</TableHead>
-                    <TableHead>Concepto</TableHead>
-                    <TableHead>Categoría</TableHead>
+                    <TableHead>Descripción</TableHead>
                     <TableHead>Fecha</TableHead>
-                    <TableHead className="text-right">Monto</TableHead>
+                    <TableHead className="text-right">Cantidad</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredTransacciones.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                         No se encontraron transacciones
                       </TableCell>
                     </TableRow>
@@ -726,8 +776,7 @@ export default function IngresosGastosPage() {
                             <span className="capitalize">{transaccion.tipo}</span>
                           </div>
                         </TableCell>
-                        <TableCell>{transaccion.concepto}</TableCell>
-                        <TableCell>{transaccion.categoria}</TableCell>
+                        <TableCell>{transaccion.descripcion}</TableCell>
                         <TableCell>{formatDate(transaccion.fecha)}</TableCell>
                         <TableCell
                           className={`text-right font-medium ${
@@ -736,7 +785,7 @@ export default function IngresosGastosPage() {
                               : "text-red-600 dark:text-red-400"
                           }`}
                         >
-                          {transaccion.tipo === "ingreso" ? "+" : "-"}${transaccion.monto.toLocaleString()}
+                          {transaccion.tipo === "ingreso" ? "+" : "-"}{typeof transaccion.cantidad === 'number' ? transaccion.cantidad.toLocaleString() : ''}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">

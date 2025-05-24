@@ -10,13 +10,19 @@ import { Progress } from "@/components/ui/progress"
 import { apiService, type Ingreso, type Gasto, type Objetivo } from "@/services/api-service"
 import { useRouter } from "next/navigation"
 
+// Extender el tipo Objetivo para incluir el porcentaje
+interface ObjetivoExtendido extends Objetivo {
+  porcentaje: number;
+  completado: boolean;
+}
+
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("general")
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [ingresos, setIngresos] = useState<Ingreso[]>([])
   const [gastos, setGastos] = useState<Gasto[]>([])
-  const [objetivos, setObjetivos] = useState<Objetivo[]>([])
+  const [objetivos, setObjetivos] = useState<ObjetivoExtendido[]>([])
   const router = useRouter()
 
   useEffect(() => {
@@ -32,9 +38,17 @@ export default function DashboardPage() {
           apiService.getObjetivos(),
         ])
 
+        // Transformar objetivos para incluir campos adicionales
+        const objetivosExtendidos: ObjetivoExtendido[] = objetivosData.map((objetivo) => ({
+          ...objetivo,
+          porcentaje: Math.min(Math.round((objetivo.actual / objetivo.meta) * 100), 100),
+          completado: objetivo.actual >= objetivo.meta
+        }))
+
         setIngresos(ingresosData)
         setGastos(gastosData)
-        setObjetivos(objetivosData)
+        // Filtrar solo objetivos activos y tomar los 3 más recientes
+        setObjetivos(objetivosExtendidos.filter(obj => !obj.completado).slice(0, 3))
       } catch (err) {
         console.error("Error fetching dashboard data:", err)
         setError("No se pudieron cargar los datos del dashboard")
@@ -47,10 +61,10 @@ export default function DashboardPage() {
   }, [])
 
   // Calcular total de ingresos
-  const totalIngresos = ingresos.reduce((sum, ingreso) => sum + ingreso.monto, 0)
+  const totalIngresos = ingresos.reduce((sum, ingreso) => sum + ingreso.cantidad, 0)
 
   // Calcular total de gastos
-  const totalGastos = gastos.reduce((sum, gasto) => sum + gasto.monto, 0)
+  const totalGastos = gastos.reduce((sum, gasto) => sum + gasto.cantidad, 0)
 
   // Calcular balance total
   const balanceTotal = totalIngresos - totalGastos
@@ -67,7 +81,7 @@ export default function DashboardPage() {
       id: `ingreso-${ingreso.id}`,
       tipo: "ingreso" as const,
       concepto: ingreso.descripcion,
-      monto: ingreso.monto,
+      monto: ingreso.cantidad,
       fecha: formatDate(ingreso.fecha),
       categoria: "Ingreso",
     })),
@@ -75,23 +89,13 @@ export default function DashboardPage() {
       id: `gasto-${gasto.id}`,
       tipo: "gasto" as const,
       concepto: gasto.descripcion,
-      monto: gasto.monto,
+      monto: gasto.cantidad,
       fecha: formatDate(gasto.fecha),
       categoria: "Gasto",
     })),
   ]
     .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
     .slice(0, 5)
-
-  // Objetivos formateados para mostrar
-  const objetivosFormateados = objetivos
-    .map((objetivo) => ({
-      nombre: objetivo.nombre,
-      actual: 0, // El API no proporciona este valor, se podría calcular de otra forma
-      objetivo: objetivo.meta,
-      porcentaje: 0, // El API no proporciona este valor, se podría calcular de otra forma
-    }))
-    .slice(0, 3)
 
   const handleNuevoIngreso = () => {
     router.push("/dashboard/ingresos-gastos?nuevo=ingreso")
@@ -166,11 +170,7 @@ export default function DashboardPage() {
       </div>
 
       <Tabs defaultValue="general" value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="ingresos-gastos">Ingresos y Gastos</TabsTrigger>
-          <TabsTrigger value="objetivos">Objetivos</TabsTrigger>
-        </TabsList>
+
         <TabsContent value="general" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card>
@@ -275,25 +275,36 @@ export default function DashboardPage() {
                 <CardDescription>Progreso hacia tus metas financieras</CardDescription>
               </CardHeader>
               <CardContent>
-                {objetivosFormateados.length > 0 ? (
+                {objetivos.length > 0 ? (
                   <div className="space-y-4">
-                    {objetivosFormateados.map((objetivo, index) => (
-                      <div key={index} className="space-y-2">
+                    {(objetivos as ObjetivoExtendido[]).map((objetivo) => (
+                      <div key={objetivo.id} className="space-y-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Target className="h-4 w-4 text-muted-foreground" />
                             <span className="text-sm font-medium">{objetivo.nombre}</span>
                           </div>
                           <span className="text-sm">
-                            ${objetivo.actual.toLocaleString()} / ${objetivo.objetivo.toLocaleString()}
+                            ${objetivo.actual.toLocaleString()} / ${objetivo.meta.toLocaleString()}
                           </span>
                         </div>
                         <Progress value={objetivo.porcentaje} className="h-2" />
+                        <div className="text-xs text-muted-foreground text-right">
+                          {objetivo.porcentaje}% completado
+                        </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-8 text-muted-foreground">No hay objetivos registrados</div>
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Target className="mx-auto h-12 w-12 mb-2" />
+                    <p>No hay objetivos registrados</p>
+                    <Link href="/dashboard/objetivos">
+                      <Button variant="outline" size="sm" className="mt-4">
+                        Crear un objetivo
+                      </Button>
+                    </Link>
+                  </div>
                 )}
                 <div className="mt-4 text-center">
                   <Link href="/dashboard/objetivos">
@@ -303,92 +314,6 @@ export default function DashboardPage() {
                   </Link>
                 </div>
               </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-        <TabsContent value="ingresos-gastos" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Ingresos por Categoría</CardTitle>
-                <CardDescription>Distribución de tus fuentes de ingresos</CardDescription>
-              </CardHeader>
-              <CardContent className="h-80 flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
-                  <CreditCard className="mx-auto h-12 w-12 mb-2" />
-                  <p>No hay suficientes datos para mostrar gráficos</p>
-                  <Link href="/dashboard/ingresos-gastos">
-                    <Button variant="outline" size="sm" className="mt-4">
-                      Ir a Ingresos y Gastos
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Gastos por Categoría</CardTitle>
-                <CardDescription>Distribución de tus gastos por categoría</CardDescription>
-              </CardHeader>
-              <CardContent className="h-80 flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
-                  <CreditCard className="mx-auto h-12 w-12 mb-2" />
-                  <p>No hay suficientes datos para mostrar gráficos</p>
-                  <Link href="/dashboard/ingresos-gastos">
-                    <Button variant="outline" size="sm" className="mt-4">
-                      Ir a Ingresos y Gastos
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-        <TabsContent value="objetivos" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {objetivosFormateados.length > 0 ? (
-              objetivosFormateados.map((objetivo, index) => (
-                <Card key={index}>
-                  <CardHeader>
-                    <CardTitle>{objetivo.nombre}</CardTitle>
-                    <CardDescription>
-                      ${objetivo.actual.toLocaleString()} de ${objetivo.objetivo.toLocaleString()}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <Progress value={objetivo.porcentaje} className="h-2" />
-                      <div className="text-sm text-muted-foreground">{objetivo.porcentaje}% completado</div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <Card className="md:col-span-2 lg:col-span-3">
-                <CardContent className="p-6 text-center">
-                  <div className="text-muted-foreground">
-                    <Target className="mx-auto h-12 w-12 mb-2" />
-                    <p>No tienes objetivos financieros registrados</p>
-                    <Link href="/dashboard/objetivos">
-                      <Button variant="outline" size="sm" className="mt-4">
-                        Crear un objetivo
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            <Card className="flex flex-col items-center justify-center p-6 border-dashed">
-              <div className="flex flex-col items-center text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
-                  <Plus className="h-6 w-6" />
-                </div>
-                <h3 className="text-lg font-medium mb-2">Crear nuevo objetivo</h3>
-                <p className="text-sm text-muted-foreground mb-4">Establece una nueva meta financiera para ahorrar</p>
-                <Link href="/dashboard/objetivos">
-                  <Button>Crear Objetivo</Button>
-                </Link>
-              </div>
             </Card>
           </div>
         </TabsContent>

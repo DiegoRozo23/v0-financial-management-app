@@ -8,7 +8,6 @@ import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
   BarChart3,
-  Bell,
   ChevronDown,
   CreditCard,
   DollarSign,
@@ -18,7 +17,6 @@ import {
   PiggyBank,
   Settings,
   Target,
-  User,
   X,
 } from "lucide-react"
 import {
@@ -31,7 +29,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useAuth } from "@/contexts/auth-context"
 
@@ -151,32 +148,6 @@ export default function DashboardLayout({
         <div className="ml-auto flex items-center gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="relative">
-                <Bell className="h-5 w-5" />
-                <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 text-xs bg-green-600">3</Badge>
-                <span className="sr-only">Notificaciones</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
-              <DropdownMenuLabel>Notificaciones</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <div className="max-h-80 overflow-auto">
-                {[1, 2, 3].map((i) => (
-                  <DropdownMenuItem key={i} className="cursor-pointer p-4">
-                    <div className="flex flex-col gap-1">
-                      <div className="font-medium">Alerta de presupuesto</div>
-                      <div className="text-sm text-muted-foreground">
-                        Has superado el 80% de tu presupuesto mensual en la categoría "Entretenimiento".
-                      </div>
-                      <div className="text-xs text-muted-foreground">Hace 2 horas</div>
-                    </div>
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarImage src="/placeholder-user.jpg" alt={user?.username || "Usuario"} />
@@ -189,10 +160,6 @@ export default function DashboardLayout({
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Mi Cuenta</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <User className="mr-2 h-4 w-4" />
-                <span>Perfil</span>
-              </DropdownMenuItem>
               <DropdownMenuItem>
                 <Settings className="mr-2 h-4 w-4" />
                 <span>Configuración</span>

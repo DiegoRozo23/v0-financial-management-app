@@ -4,9 +4,21 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowUpRight, LineChart, Plus, TrendingUp, Edit, Trash2, Download, PiggyBank, Loader2 } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  ArrowUp,
+  Calendar,
+  CreditCard,
+  Filter,
+  Plus,
+  Search,
+  Trash2,
+  Edit,
+  Download,
+  Loader2,
+  PiggyBank, // Icono para Ahorros
+} from "lucide-react"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -18,8 +30,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,26 +43,23 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/ui/chart"
-import { exportAsCSV, exportAsExcel, exportAsPDF } from "@/utils/export-utils"
 import { apiService, type Ahorro } from "@/services/api-service"
 
 export default function AhorrosPage() {
   const [openDialog, setOpenDialog] = useState<boolean>(false)
-  const [activeTab, setActiveTab] = useState("todos")
+  const [searchTerm, setSearchTerm] = useState("")
   const [ahorros, setAhorros] = useState<Ahorro[]>([])
   const [ahorroActual, setAhorroActual] = useState<Ahorro | null>(null)
   const [formData, setFormData] = useState({
     nombre: "",
-    monto: "",
-    descripcion: "",
+    cantidad: "",
+    descripcion: "", // Mantener el campo de descripción para el formulario
     fecha: new Date().toISOString().split("T")[0],
     fecha_Final: "",
   })
   const [isLoading, setIsLoading] = useState(false)
   const [isFetching, setIsFetching] = useState(true)
   const [exportLoading, setExportLoading] = useState(false)
-  const [exportFormat, setExportFormat] = useState<"excel" | "pdf" | "csv">("excel")
   const [showExportOptions, setShowExportOptions] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -64,7 +71,12 @@ export default function AhorrosPage() {
 
       try {
         const ahorrosData = await apiService.getAhorros()
-        setAhorros(ahorrosData)
+        // Ordenar por fecha_Final (más cercano primero) o fecha de inicio si final no existe
+        setAhorros(ahorrosData.sort((a, b) => {
+            const dateA = new Date(a.fecha_Final || a.fecha).getTime();
+            const dateB = new Date(b.fecha_Final || b.fecha).getTime();
+            return dateA - dateB;
+        }));
       } catch (err) {
         console.error("Error al cargar ahorros:", err)
         setError("No se pudieron cargar los ahorros. Intente nuevamente más tarde.")
@@ -76,37 +88,21 @@ export default function AhorrosPage() {
     fetchAhorros()
   }, [])
 
-  const tiposAhorro = ["Emergencia", "Ocio", "Compras grandes", "Educación", "Hogar", "Jubilación", "Otros"]
+  const totalAhorros = ahorros.reduce((sum, ahorro) => sum + ahorro.cantidad, 0)
 
-  const totalAhorros = ahorros.reduce((sum, ahorro) => sum + ahorro.monto, 0)
-
-  // Calculamos el ahorro mensual basado en los ahorros del último mes
   const hoy = new Date()
-  const unMesAtras = new Date(hoy.getFullYear(), hoy.getMonth() - 1, hoy.getDate()).toISOString().split("T")[0]
+  const unMesAtras = new Date(hoy.getFullYear(), hoy.getMonth() - 1, hoy.getDate())
   const ahorroMensual = ahorros
-    .filter((ahorro) => new Date(ahorro.fecha) >= new Date(unMesAtras))
-    .reduce((sum, ahorro) => sum + ahorro.monto, 0)
+    .filter((ahorro) => new Date(ahorro.fecha) >= unMesAtras)
+    .reduce((sum, ahorro) => sum + ahorro.cantidad, 0)
 
-  const filteredAhorros = ahorros.filter((ahorro) => {
-    if (activeTab === "todos") return true
-
-    // Filtramos por descripción, ya que el API no tiene un campo de tipo
-    return ahorro.descripcion.toLowerCase().includes(activeTab.toLowerCase())
-  })
-
-  // Datos para gráficos
-  const distribucionData = tiposAhorro
-    .map((tipo) => {
-      const montoTotal = ahorros
-        .filter((ahorro) => ahorro.descripcion.toLowerCase().includes(tipo.toLowerCase()))
-        .reduce((sum, ahorro) => sum + ahorro.monto, 0)
-
-      return {
-        name: tipo,
-        value: montoTotal,
-      }
-    })
-    .filter((item) => item.value > 0)
+  // Filtrado por nombre o descripción (si la descripción se envía desde el backend)
+  const filteredAhorros = ahorros.filter(
+    (ahorro) =>
+      searchTerm === "" ||
+      ahorro.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (ahorro.descripcion && ahorro.descripcion.toLowerCase().includes(searchTerm.toLowerCase())),
+  )
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target
@@ -114,18 +110,13 @@ export default function AhorrosPage() {
     setFormData((prev) => ({ ...prev, [fieldName]: value }))
   }
 
-  const handleSelectChange = (value: string) => {
-    // Como el API no tiene un campo tipo, lo guardamos en descripción
-    setFormData((prev) => ({ ...prev, descripcion: `${value}: ${prev.descripcion}` }))
-  }
-
   const resetForm = () => {
     setFormData({
       nombre: "",
-      monto: "",
+      cantidad: "",
       descripcion: "",
       fecha: new Date().toISOString().split("T")[0],
-      fecha_Final: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
+      fecha_Final: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0], // Default 1 year from now
     })
     setAhorroActual(null)
   }
@@ -134,11 +125,10 @@ export default function AhorrosPage() {
     setIsLoading(true)
     setError(null)
 
-    // Validación básica
-    if (!formData.nombre || !formData.monto || !formData.fecha) {
+    if (!formData.nombre || !formData.cantidad || !formData.fecha) {
       toast({
         title: "Error",
-        description: "Por favor completa todos los campos obligatorios",
+        description: "Por favor completa los campos obligatorios: Nombre, Cantidad y Fecha de Inicio.",
         variant: "destructive",
       })
       setIsLoading(false)
@@ -146,24 +136,24 @@ export default function AhorrosPage() {
     }
 
     try {
-      const ahorroData = {
+      const ahorroDataToSend = {
         nombre: formData.nombre,
-        monto: Number.parseFloat(formData.monto),
-        descripcion: formData.descripcion || "Ahorro",
+        cantidad: Number.parseFloat(formData.cantidad),
+        descripcion: formData.descripcion || "", // Enviar como string vacío si es null/undefined
         fecha: formData.fecha,
-        fecha_Final:
-          formData.fecha_Final ||
-          new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
+        fecha_Final: formData.fecha_Final || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
       }
 
+      let resultAhorro: Ahorro;
       if (ahorroActual) {
         // Actualizar ahorro existente
-        const updatedAhorro = await apiService.updateAhorro(ahorroActual.id || 0, ahorroData)
-
-        // Actualizar estado local
-        const updatedAhorros = ahorros.map((ahorro) => (ahorro.id === ahorroActual.id ? updatedAhorro : ahorro))
-
-        setAhorros(updatedAhorros)
+        resultAhorro = await apiService.updateAhorro(ahorroActual.id || 0, ahorroDataToSend as Ahorro)
+        const updatedAhorros = ahorros.map((ahorro) => (ahorro.id === ahorroActual.id ? resultAhorro : ahorro))
+        setAhorros(updatedAhorros.sort((a, b) => {
+            const dateA = new Date(a.fecha_Final || a.fecha).getTime();
+            const dateB = new Date(b.fecha_Final || b.fecha).getTime();
+            return dateA - dateB;
+        }));
 
         toast({
           title: "Ahorro actualizado",
@@ -171,8 +161,12 @@ export default function AhorrosPage() {
         })
       } else {
         // Crear nuevo ahorro
-        const newAhorro = await apiService.createAhorro(ahorroData)
-        setAhorros([...ahorros, newAhorro])
+        resultAhorro = await apiService.createAhorro(ahorroDataToSend as Ahorro)
+        setAhorros([resultAhorro, ...ahorros].sort((a, b) => {
+            const dateA = new Date(a.fecha_Final || a.fecha).getTime();
+            const dateB = new Date(b.fecha_Final || b.fecha).getTime();
+            return dateA - dateB;
+        }));
 
         toast({
           title: "Ahorro creado",
@@ -197,10 +191,10 @@ export default function AhorrosPage() {
     setAhorroActual(ahorro)
     setFormData({
       nombre: ahorro.nombre,
-      monto: ahorro.monto.toString(),
-      descripcion: ahorro.descripcion,
-      fecha: ahorro.fecha,
-      fecha_Final: ahorro.fecha_Final,
+      cantidad: ahorro.cantidad.toString(),
+      descripcion: ahorro.descripcion || "", // Asegurarse de que sea string para el input
+      fecha: new Date(ahorro.fecha).toISOString().split("T")[0], // Formatear para input type="date"
+      fecha_Final: new Date(ahorro.fecha_Final).toISOString().split("T")[0], // Formatear para input type="date"
     })
     setOpenDialog(true)
   }
@@ -209,8 +203,6 @@ export default function AhorrosPage() {
     setIsLoading(true)
     try {
       await apiService.deleteAhorro(id)
-
-      // Actualizar estado local
       setAhorros(ahorros.filter((ahorro) => ahorro.id !== id))
 
       toast({
@@ -230,45 +222,12 @@ export default function AhorrosPage() {
   }
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
+    // Asegurar que la fecha sea válida antes de formatear
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+        return "Fecha inválida";
+    }
     return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
-  }
-
-  const handleExport = (format: "excel" | "pdf" | "csv") => {
-    setExportFormat(format)
-    setExportLoading(true)
-
-    setTimeout(() => {
-      const dataToExport = filteredAhorros.map((ahorro) => ({
-        Nombre: ahorro.nombre,
-        Tipo: "Ahorro",
-        "Fecha Inicio": formatDate(ahorro.fecha),
-        "Fecha Fin": formatDate(ahorro.fecha_Final),
-        Monto: `$${ahorro.monto.toLocaleString()}`,
-        Descripción: ahorro.descripcion || "",
-      }))
-
-      const fileName = `ahorros_${new Date().toISOString().split("T")[0]}`
-
-      switch (format) {
-        case "excel":
-          exportAsExcel(dataToExport, fileName)
-          break
-        case "pdf":
-          exportAsPDF(dataToExport, fileName, "Reporte de Ahorros")
-          break
-        case "csv":
-          exportAsCSV(dataToExport, fileName)
-          break
-      }
-
-      setExportLoading(false)
-      toast({
-        title: "Exportación completada",
-        description: `Tus ahorros han sido exportados en formato ${format.toUpperCase()}.`,
-      })
-      setShowExportOptions(false)
-    }, 1000)
   }
 
   if (isFetching) {
@@ -298,7 +257,7 @@ export default function AhorrosPage() {
         <div className="flex gap-2">
           <Dialog open={openDialog} onOpenChange={setOpenDialog}>
             <DialogTrigger asChild>
-              <Button className="bg-green-600 hover:bg-green-700">
+              <Button className="bg-green-600 hover:bg-green-700" onClick={resetForm}>
                 <Plus className="mr-2 h-4 w-4" />
                 Nuevo Ahorro
               </Button>
@@ -321,27 +280,12 @@ export default function AhorrosPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="tipo-ahorro">Tipo</Label>
-                  <Select onValueChange={handleSelectChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un tipo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tiposAhorro.map((tipo) => (
-                        <SelectItem key={tipo} value={tipo}>
-                          {tipo}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="monto-ahorro">Monto</Label>
+                  <Label htmlFor="cantidad-ahorro">Cantidad</Label>
                   <Input
-                    id="monto-ahorro"
+                    id="cantidad-ahorro"
                     type="number"
                     placeholder="0.00"
-                    value={formData.monto}
+                    value={formData.cantidad}
                     onChange={handleInputChange}
                   />
                 </div>
@@ -388,56 +332,56 @@ export default function AhorrosPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Ahorros</CardTitle>
-            <PiggyBank className="h-4 w-4 text-muted-foreground" />
+            <PiggyBank className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalAhorros.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">{ahorros.length} ahorros registrados</div>
+            <div className="text-2xl font-bold text-green-700 dark:text-green-400">${totalAhorros.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground">Cantidad total acumulada</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Ahorro Mensual</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
+            <ArrowUp className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">${ahorroMensual.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-700 dark:text-green-400">${ahorroMensual.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground">
-              {ahorroMensual > 0 ? "Buen trabajo ahorrando este mes" : "No has ahorrado este mes"}
+              {ahorroMensual > 0 ? "Ahorrado este mes" : "Sin ahorros este mes"}
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Mayor Ahorro</CardTitle>
-            <ArrowUpRight className="h-4 w-4 text-green-600" />
+            <CardTitle className="text-sm font-medium">Mayor Ahorro Individual</CardTitle>
+            <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {ahorros.length > 0
-                ? ahorros.reduce((max, ahorro) => (ahorro.monto > max.monto ? ahorro : max), ahorros[0]).nombre
+                ? `$${ahorros
+                    .reduce((max, ahorro) => (ahorro.cantidad > max.cantidad ? ahorro : max), ahorros[0])
+                    .cantidad.toLocaleString()}`
                 : "N/A"}
             </div>
-            <div className="text-xs text-green-600">
+            <div className="text-xs text-muted-foreground">
               {ahorros.length > 0
-                ? `$${ahorros
-                    .reduce((max, ahorro) => (ahorro.monto > max.monto ? ahorro : max), ahorros[0])
-                    .monto.toLocaleString()}`
+                ? ahorros.reduce((max, ahorro) => (ahorro.cantidad > max.cantidad ? ahorro : max), ahorros[0]).nombre
                 : "Sin datos"}
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Fondos</CardTitle>
-            <LineChart className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Ahorros Registrados</CardTitle>
+            <PiggyBank className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{ahorros.length}</div>
-            <div className="text-xs text-muted-foreground">Planificando tu futuro financiero</div>
+            <div className="text-xs text-muted-foreground">Total de fondos de ahorro</div>
           </CardContent>
         </Card>
       </div>
@@ -451,207 +395,115 @@ export default function AhorrosPage() {
         </Card>
       )}
 
-      {!error && ahorros.length > 0 && (
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Buscar ahorro por nombre o descripción..."
+              className="pl-8 w-full sm:w-[300px]"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto justify-end">
+            <Button variant="outline" size="icon">
+              <Filter className="h-4 w-4" />
+              <span className="sr-only">Filtrar</span>
+            </Button>
+
+          </div>
+        </div>
+
         <Card>
-          <CardHeader>
-            <CardTitle>Evolución de Ahorros</CardTitle>
-            <CardDescription>Visualiza el crecimiento de tus ahorros en el tiempo</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={ahorros.map((ahorro) => ({
-                    name: ahorro.nombre,
-                    monto: ahorro.monto,
-                  }))}
-                  margin={{
-                    top: 20,
-                    right: 30,
-                    left: 20,
-                    bottom: 5,
-                  }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, "Monto"]}
-                    labelFormatter={(label) => `Ahorro: ${label}`}
-                  />
-                  <Legend />
-                  <Bar dataKey="monto" name="Monto Ahorrado" fill="#82ca9d" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex justify-center items-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">Cargando ahorros...</span>
+              </div>
+            ) : filteredAhorros.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <PiggyBank className="mx-auto h-12 w-12 mb-4" />
+                <p className="text-lg">No se encontraron ahorros que coincidan con tu búsqueda.</p>
+                <p className="mb-4">Intenta ajustar tu término de búsqueda o crea un nuevo ahorro.</p>
+                <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Registrar Ahorro
+                </Button>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nombre</TableHead>
+                    {/* <TableHead>Descripción</TableHead> */} {/* Eliminada */}
+                    <TableHead>Fecha Inicio</TableHead>
+                    <TableHead>Fecha Final</TableHead>
+                    <TableHead className="text-right">Cantidad</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAhorros.map((ahorro) => (
+                    <TableRow key={ahorro.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
+                            <PiggyBank className="h-4 w-4 text-green-600 dark:text-green-400" />
+                          </div>
+                          <span className="font-medium">{ahorro.nombre}</span>
+                        </div>
+                      </TableCell>
+                      {/* <TableCell>{ahorro.descripcion || "N/A"}</TableCell> */} {/* Eliminada */}
+                      <TableCell>{formatDate(ahorro.fecha)}</TableCell>
+                      <TableCell>{formatDate(ahorro.fecha_Final)}</TableCell>
+                      <TableCell className="text-right font-medium text-green-600 dark:text-green-400">
+                        ${ahorro.cantidad.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(ahorro)}>
+                            <Edit className="h-4 w-4" />
+                            <span className="sr-only">Editar</span>
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
+                                <Trash2 className="h-4 w-4" />
+                                <span className="sr-only">Eliminar</span>
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Esta acción no se puede deshacer. Esto eliminará permanentemente el ahorro{" "}
+                                  <span className="font-bold">{ahorro.nombre}</span>.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className="bg-red-600 hover:bg-red-700"
+                                  onClick={() => handleDelete(ahorro.id || 0)}
+                                >
+                                  Eliminar
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
-      )}
-
-      <Tabs defaultValue="todos" value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="todos">Todos</TabsTrigger>
-          <TabsTrigger value="emergencia">Emergencia</TabsTrigger>
-          <TabsTrigger value="ocio">Ocio</TabsTrigger>
-          <TabsTrigger value="otros">Otros</TabsTrigger>
-        </TabsList>
-        <TabsContent value={activeTab} className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Mis Ahorros</CardTitle>
-              <CardDescription>
-                Listado de {activeTab === "todos" ? "todos tus ahorros" : `tus ahorros de tipo ${activeTab}`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              {isLoading ? (
-                <div className="flex justify-center items-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                  <span className="ml-2 text-muted-foreground">Cargando ahorros...</span>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nombre</TableHead>
-                      <TableHead>Fecha Inicio</TableHead>
-                      <TableHead>Fecha Final</TableHead>
-                      <TableHead>Monto</TableHead>
-                      <TableHead>Descripción</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAhorros.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                          No se encontraron ahorros
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredAhorros.map((ahorro) => (
-                        <TableRow key={ahorro.id}>
-                          <TableCell className="font-medium">{ahorro.nombre}</TableCell>
-                          <TableCell>{formatDate(ahorro.fecha)}</TableCell>
-                          <TableCell>{formatDate(ahorro.fecha_Final)}</TableCell>
-                          <TableCell>${ahorro.monto.toLocaleString()}</TableCell>
-                          <TableCell className="max-w-[200px] truncate">{ahorro.descripcion || "-"}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="icon" onClick={() => handleEdit(ahorro)}>
-                                <Edit className="h-4 w-4" />
-                                <span className="sr-only">Editar</span>
-                              </Button>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
-                                    <Trash2 className="h-4 w-4" />
-                                    <span className="sr-only">Eliminar</span>
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      Esta acción no se puede deshacer. Esto eliminará permanentemente el ahorro.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                    <AlertDialogAction
-                                      className="bg-red-600 hover:bg-red-700"
-                                      onClick={() => handleDelete(ahorro.id || 0)}
-                                    >
-                                      Eliminar
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-            <CardFooter className="flex justify-between">
-              <div className="relative">
-                <Button
-                  variant="outline"
-                  onClick={() => setShowExportOptions(!showExportOptions)}
-                  className="flex items-center gap-2"
-                >
-                  <Download className="h-4 w-4" />
-                  Exportar
-                </Button>
-                {showExportOptions && (
-                  <div className="absolute top-full left-0 mt-2 w-40 bg-background border rounded-md shadow-md z-10">
-                    <div className="p-1">
-                      <Button
-                        variant="ghost"
-                        className="w-full justify-start text-sm"
-                        onClick={() => handleExport("excel")}
-                        disabled={exportLoading}
-                      >
-                        Excel
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="w-full justify-start text-sm"
-                        onClick={() => handleExport("pdf")}
-                        disabled={exportLoading}
-                      >
-                        PDF
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="w-full justify-start text-sm"
-                        onClick={() => handleExport("csv")}
-                        disabled={exportLoading}
-                      >
-                        CSV
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardFooter>
-          </Card>
-
-          {filteredAhorros.length > 0 && !error && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Distribución de Ahorros</CardTitle>
-                <CardDescription>Distribución de tus ahorros por categoría</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={distribucionData}
-                      margin={{
-                        top: 20,
-                        right: 30,
-                        left: 20,
-                        bottom: 5,
-                      }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, "Monto"]} />
-                      <Legend />
-                      <Bar dataKey="value" name="Monto" fill="#82ca9d" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-      </Tabs>
+      </div>
     </div>
   )
 }
