@@ -55,7 +55,7 @@ interface Transaccion {
   cantidad: number
   fecha: string
   originalId: number | undefined
-  esGastoFijo: boolean
+  esGastoFijo: boolean | null
   frecuencia?: number
 }
 
@@ -71,11 +71,18 @@ export default function IngresosGastosPage() {
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
   const [transaccionActual, setTransaccionActual] = useState<Transaccion | null>(null)
   const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([])
-  const [formData, setFormData] = useState({
+  interface FormData {
+    descripcion: string
+    cantidad: string
+    fecha: string
+    esGastoFijo: boolean | null
+    frecuencia: string
+  }
+  const [formData, setFormData] = useState<FormData>({
     descripcion: "",
     cantidad: "",
     fecha: new Date().toISOString().split("T")[0],
-    esGastoFijo: false,
+    esGastoFijo: null,
     frecuencia: ""
   })
   const [isLoading, setIsLoading] = useState(false)
@@ -127,6 +134,7 @@ export default function IngresosGastosPage() {
           fecha: gastoFijo.fecha,
           originalId: gastoFijo.id,
           esGastoFijo: true,
+          frecuencia: gastoFijo.frecuencia
         }))
 
         // Combinar y ordenar por fecha (más reciente primero)
@@ -176,7 +184,7 @@ export default function IngresosGastosPage() {
     .filter(
       (t) =>
         searchTerm === "" ||
-        t.descripcion.toLowerCase().includes(searchTerm.toLowerCase()),
+        (t.descripcion && t.descripcion.toLowerCase().includes(searchTerm.toLowerCase())),
     )
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -190,7 +198,7 @@ export default function IngresosGastosPage() {
       descripcion: "",
       cantidad: "",
       fecha: new Date().toISOString().split("T")[0],
-      esGastoFijo: false,
+      esGastoFijo: null,
       frecuencia: ""
     })
     setTransaccionActual(null)
@@ -200,10 +208,10 @@ export default function IngresosGastosPage() {
     setIsLoading(true)
     setError(null)
 
-    if (!formData.cantidad || !formData.fecha) {
+    if (!formData.cantidad || (formData.esGastoFijo === false && !formData.fecha)) {
       toast({
         title: "Error",
-        description: "Por favor completa la cantidad y la fecha.",
+        description: "Por favor completa todos los campos requeridos.",
         variant: "destructive",
       })
       setIsLoading(false)
@@ -220,11 +228,11 @@ export default function IngresosGastosPage() {
       return
     }
 
-    // Validar frecuencia para todos los gastos
-    if (openDialog === "gasto" && !formData.frecuencia) {
+    // Validar frecuencia solo para gastos fijos
+    if (formData.esGastoFijo && !formData.frecuencia) {
       toast({
         title: "Error",
-        description: "Por favor selecciona una frecuencia para el gasto.",
+        description: "Por favor selecciona una frecuencia para el gasto fijo.",
         variant: "destructive",
       })
       setIsLoading(false)
@@ -237,8 +245,7 @@ export default function IngresosGastosPage() {
         const commonUpdateData = {
           descripcion: formData.descripcion.trim(),
           cantidad: Number.parseFloat(formData.cantidad),
-          fecha: formData.fecha,
-          ...(formData.esGastoFijo ? { frecuencia: Number(formData.frecuencia) } : {})
+          ...(formData.esGastoFijo ? { frecuencia: Number(formData.frecuencia) } : { fecha: formData.fecha }),
         }
 
         if (transaccionActual.tipo === "ingreso") {
@@ -368,11 +375,13 @@ export default function IngresosGastosPage() {
   const handleDelete = async (transaccion: Transaccion) => {
     setIsLoading(true)
     try {
-        if (transaccion.originalId === undefined) {
-            throw new Error("Transaction ID is undefined, cannot delete.");
-        }
+      if (transaccion.originalId === undefined) {
+        throw new Error("Transaction ID is undefined, cannot delete.");
+      }
       if (transaccion.tipo === "ingreso") {
         await apiService.deleteIngreso(transaccion.originalId)
+      } else if (transaccion.esGastoFijo) {
+        await apiService.deleteGastoFijo(transaccion.originalId)
       } else {
         await apiService.deleteGasto(transaccion.originalId)
       }
@@ -401,6 +410,11 @@ export default function IngresosGastosPage() {
     return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
   }
 
+  const getFrecuenciaText = (frecuenciaId: number | undefined) => {
+    if (!frecuenciaId) return "";
+    const frecuencia = frecuencias.find(f => f.id === frecuenciaId);
+    return frecuencia ? frecuencia.Tipo : "";
+  }
 
   // Calcular totales
   const totalIngresos = transacciones.filter((t) => t.tipo === "ingreso").reduce((sum, t) => sum + t.cantidad, 0)
@@ -497,6 +511,20 @@ export default function IngresosGastosPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
+                  <Label htmlFor="tipo-gasto">Tipo de Gasto</Label>
+                  <select
+                    id="tipo-gasto"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formData.esGastoFijo ? "fijo" : formData.esGastoFijo === false ? "variable" : ""}
+                    onChange={(e) => setFormData(prev => ({ ...prev, esGastoFijo: e.target.value === "fijo" }))}
+                    required
+                  >
+                    <option value="">Selecciona el tipo de gasto</option>
+                    <option value="fijo">Gasto Fijo</option>
+                    <option value="variable">Gasto Variable</option>
+                  </select>
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="descripcion-gasto">Descripción</Label>
                   <Input
                     id="descripcion-gasto"
@@ -515,49 +543,39 @@ export default function IngresosGastosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="fecha-gasto">Fecha</Label>
-                  <div className="relative">
-                    <Input 
-                      id="fecha-gasto" 
-                      type="date" 
-                      value={formData.fecha || new Date().toISOString().split("T")[0]}
-                      onChange={handleInputChange} 
-                    />
-                    <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                {!formData.esGastoFijo && formData.esGastoFijo !== null && (
+                  <div className="grid gap-2">
+                    <Label htmlFor="fecha-gasto">Fecha</Label>
+                    <div className="relative">
+                      <Input 
+                        id="fecha-gasto" 
+                        type="date" 
+                        value={formData.fecha || new Date().toISOString().split("T")[0]}
+                        onChange={handleInputChange} 
+                      />
+                      <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    </div>
                   </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="tipo-gasto">Tipo de Gasto</Label>
-                  <select
-                    id="tipo-gasto"
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    value={formData.esGastoFijo ? "fijo" : "variable"}
-                    onChange={(e) => setFormData(prev => ({ ...prev, esGastoFijo: e.target.value === "fijo" }))}
-                    required
-                  >
-                    <option value="">Selecciona el tipo de gasto</option>
-                    <option value="fijo">Gasto Fijo</option>
-                    <option value="variable">Gasto Variable</option>
-                  </select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="frecuencia-gasto">Frecuencia</Label>
-                  <select
-                    id="frecuencia-gasto"
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    value={formData.frecuencia}
-                    onChange={(e) => setFormData(prev => ({ ...prev, frecuencia: e.target.value }))}
-                    required
-                  >
-                    <option value="">Selecciona la frecuencia</option>
-                    {frecuencias.map((freq) => (
-                      <option key={freq.id} value={freq.id}>
-                        {freq.Tipo}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                )}
+                {formData.esGastoFijo && (
+                  <div className="grid gap-2">
+                    <Label htmlFor="frecuencia-gasto">Frecuencia</Label>
+                    <select
+                      id="frecuencia-gasto"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formData.frecuencia}
+                      onChange={(e) => setFormData(prev => ({ ...prev, frecuencia: e.target.value }))}
+                      required
+                    >
+                      <option value="">Selecciona la frecuencia</option>
+                      {frecuencias.map((freq) => (
+                        <option key={freq.id} value={freq.id}>
+                          {freq.Tipo}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button
@@ -587,7 +605,6 @@ export default function IngresosGastosPage() {
                 <DialogDescription>Modifica los detalles de la transacción</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
-                {/* Campo de descripción siempre visible para edición */}
                 <div className="grid gap-2">
                   <Label htmlFor="descripcion-editar">Descripción</Label>
                   <Input
@@ -607,13 +624,33 @@ export default function IngresosGastosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="fecha-editar">Fecha</Label>
-                  <div className="relative">
-                    <Input id="fecha-editar" type="date" value={formData.fecha} onChange={handleInputChange} />
-                    <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                {formData.esGastoFijo ? (
+                  <div className="grid gap-2">
+                    <Label htmlFor="frecuencia-editar">Frecuencia</Label>
+                    <select
+                      id="frecuencia-editar"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formData.frecuencia}
+                      onChange={handleInputChange}
+                      required
+                    >
+                      <option value="">Selecciona la frecuencia</option>
+                      {frecuencias.map((freq) => (
+                        <option key={freq.id} value={freq.id}>
+                          {freq.Tipo}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid gap-2">
+                    <Label htmlFor="fecha-editar">Fecha</Label>
+                    <div className="relative">
+                      <Input id="fecha-editar" type="date" value={formData.fecha} onChange={handleInputChange} />
+                      <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button
@@ -700,7 +737,7 @@ export default function IngresosGastosPage() {
             <TabsList>
               <TabsTrigger value="todos">Todos</TabsTrigger>
               <TabsTrigger value="ingreso">Ingresos</TabsTrigger>
-              <TabsTrigger value="gasto">Gastos</TabsTrigger>
+              <TabsTrigger value="gasto">Gastos Variables</TabsTrigger>
               <TabsTrigger value="gasto-fijo">Gastos Fijos</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -743,7 +780,7 @@ export default function IngresosGastosPage() {
                   <TableRow>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Descripción</TableHead>
-                    <TableHead>Fecha</TableHead>
+                    <TableHead>{activeTab === "gasto-fijo" ? "Frecuencia" : "Fecha"}</TableHead>
                     <TableHead className="text-right">Cantidad</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
@@ -777,7 +814,12 @@ export default function IngresosGastosPage() {
                           </div>
                         </TableCell>
                         <TableCell>{transaccion.descripcion}</TableCell>
-                        <TableCell>{formatDate(transaccion.fecha)}</TableCell>
+                        <TableCell>
+                          {transaccion.esGastoFijo ? 
+                            getFrecuenciaText(transaccion.frecuencia) : 
+                            formatDate(transaccion.fecha)
+                          }
+                        </TableCell>
                         <TableCell
                           className={`text-right font-medium ${
                             transaccion.tipo === "ingreso"
@@ -785,7 +827,7 @@ export default function IngresosGastosPage() {
                               : "text-red-600 dark:text-red-400"
                           }`}
                         >
-                          {transaccion.tipo === "ingreso" ? "+" : "-"}{typeof transaccion.cantidad === 'number' ? transaccion.cantidad.toLocaleString() : ''}
+                          {transaccion.tipo === "ingreso" ? "+" : "-"}${typeof transaccion.cantidad === 'number' ? transaccion.cantidad.toLocaleString() : ''}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -813,7 +855,14 @@ export default function IngresosGastosPage() {
                                     className="bg-red-600 hover:bg-red-700"
                                     onClick={() => handleDelete(transaccion)}
                                   >
-                                    Eliminar
+                                    {isLoading ? (
+                                      <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Eliminando...
+                                      </>
+                                    ) : (
+                                      "Eliminar"
+                                    )}
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>

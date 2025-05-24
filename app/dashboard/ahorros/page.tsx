@@ -16,7 +16,8 @@ import {
   Edit,
   Download,
   Loader2,
-  PiggyBank, // Icono para Ahorros
+  PiggyBank,
+  Coins,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -47,13 +48,15 @@ import { apiService, type Ahorro } from "@/services/api-service"
 
 export default function AhorrosPage() {
   const [openDialog, setOpenDialog] = useState<boolean>(false)
+  const [openAddMoneyDialog, setOpenAddMoneyDialog] = useState<boolean>(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [ahorros, setAhorros] = useState<Ahorro[]>([])
   const [ahorroActual, setAhorroActual] = useState<Ahorro | null>(null)
+  const [selectedAhorro, setSelectedAhorro] = useState<Ahorro | null>(null)
+  const [addMoneyAmount, setAddMoneyAmount] = useState("")
   const [formData, setFormData] = useState({
     nombre: "",
     cantidad: "",
-    descripcion: "", // Mantener el campo de descripción para el formulario
     fecha: new Date().toISOString().split("T")[0],
     fecha_Final: "",
   })
@@ -114,9 +117,8 @@ export default function AhorrosPage() {
     setFormData({
       nombre: "",
       cantidad: "",
-      descripcion: "",
       fecha: new Date().toISOString().split("T")[0],
-      fecha_Final: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0], // Default 1 year from now
+      fecha_Final: "",
     })
     setAhorroActual(null)
   }
@@ -139,7 +141,6 @@ export default function AhorrosPage() {
       const ahorroDataToSend = {
         nombre: formData.nombre,
         cantidad: Number.parseFloat(formData.cantidad),
-        descripcion: formData.descripcion || "", // Enviar como string vacío si es null/undefined
         fecha: formData.fecha,
         fecha_Final: formData.fecha_Final || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split("T")[0],
       }
@@ -192,7 +193,6 @@ export default function AhorrosPage() {
     setFormData({
       nombre: ahorro.nombre,
       cantidad: ahorro.cantidad.toString(),
-      descripcion: ahorro.descripcion || "", // Asegurarse de que sea string para el input
       fecha: new Date(ahorro.fecha).toISOString().split("T")[0], // Formatear para input type="date"
       fecha_Final: new Date(ahorro.fecha_Final).toISOString().split("T")[0], // Formatear para input type="date"
     })
@@ -230,6 +230,40 @@ export default function AhorrosPage() {
     return date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
   }
 
+  const handleAddMoney = async () => {
+    if (!selectedAhorro || !addMoneyAmount) return;
+    
+    setIsLoading(true);
+    try {
+      const newAmount = selectedAhorro.cantidad + Number(addMoneyAmount);
+      const updatedAhorro = await apiService.updateAhorro(selectedAhorro.id || 0, {
+        ...selectedAhorro,
+        cantidad: newAmount
+      });
+      
+      setAhorros(ahorros.map(ahorro => 
+        ahorro.id === selectedAhorro.id ? updatedAhorro : ahorro
+      ));
+      
+      toast({
+        title: "Dinero añadido",
+        description: `Se han añadido $${Number(addMoneyAmount).toLocaleString()} a "${selectedAhorro.nombre}"`,
+      });
+      
+      setOpenAddMoneyDialog(false);
+      setAddMoneyAmount("");
+      setSelectedAhorro(null);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "No se pudo añadir el dinero. Intente nuevamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   if (isFetching) {
     return (
       <div className="space-y-6">
@@ -247,22 +281,22 @@ export default function AhorrosPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fadeIn">
       <Toaster />
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
+        <div className="animate-slideInLeft">
           <h1 className="text-2xl font-bold tracking-tight">Ahorros</h1>
           <p className="text-muted-foreground">Administra y haz seguimiento de tus ahorros.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 animate-slideInRight">
           <Dialog open={openDialog} onOpenChange={setOpenDialog}>
             <DialogTrigger asChild>
-              <Button className="bg-green-600 hover:bg-green-700" onClick={resetForm}>
+              <Button className="bg-green-600 hover:bg-green-700 transition-all duration-300 hover:scale-105">
                 <Plus className="mr-2 h-4 w-4" />
                 Nuevo Ahorro
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="animate-scaleIn">
               <DialogHeader>
                 <DialogTitle>{ahorroActual ? "Editar Ahorro" : "Registrar Nuevo Ahorro"}</DialogTitle>
                 <DialogDescription>
@@ -277,6 +311,7 @@ export default function AhorrosPage() {
                     placeholder="Ej: Fondo de emergencia, Vacaciones, etc."
                     value={formData.nombre}
                     onChange={handleInputChange}
+                    className="transition-all duration-300 focus:ring-2 focus:ring-green-500"
                   />
                 </div>
                 <div className="grid gap-2">
@@ -287,20 +322,18 @@ export default function AhorrosPage() {
                     placeholder="0.00"
                     value={formData.cantidad}
                     onChange={handleInputChange}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="descripcion-ahorro">Descripción (opcional)</Label>
-                  <Input
-                    id="descripcion-ahorro"
-                    placeholder="Describe el propósito de este ahorro"
-                    value={formData.descripcion}
-                    onChange={handleInputChange}
+                    className="transition-all duration-300 focus:ring-2 focus:ring-green-500"
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="fecha-ahorro">Fecha de Inicio</Label>
-                  <Input id="fecha-ahorro" type="date" value={formData.fecha} onChange={handleInputChange} />
+                  <Input 
+                    id="fecha-ahorro" 
+                    type="date" 
+                    value={formData.fecha} 
+                    onChange={handleInputChange}
+                    className="transition-all duration-300 focus:ring-2 focus:ring-green-500"
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="fecha_Final-ahorro">Fecha Final</Label>
@@ -309,6 +342,7 @@ export default function AhorrosPage() {
                     type="date"
                     value={formData.fecha_Final}
                     onChange={handleInputChange}
+                    className="transition-all duration-300 focus:ring-2 focus:ring-green-500"
                   />
                 </div>
               </div>
@@ -319,10 +353,15 @@ export default function AhorrosPage() {
                     setOpenDialog(false)
                     resetForm()
                   }}
+                  className="transition-all duration-300 hover:bg-gray-100"
                 >
                   Cancelar
                 </Button>
-                <Button className="bg-green-600 hover:bg-green-700" onClick={handleSubmit} disabled={isLoading}>
+                <Button 
+                  className="bg-green-600 hover:bg-green-700 transition-all duration-300 hover:scale-105" 
+                  onClick={handleSubmit} 
+                  disabled={isLoading}
+                >
                   {isLoading ? "Guardando..." : "Guardar"}
                 </Button>
               </DialogFooter>
@@ -331,36 +370,36 @@ export default function AhorrosPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 animate-fadeIn">
+        <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-green-200 dark:border-green-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Ahorros</CardTitle>
-            <PiggyBank className="h-4 w-4 text-green-500" />
+            <PiggyBank className="h-4 w-4 text-green-600 dark:text-green-400" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-700 dark:text-green-400">${totalAhorros.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground">Cantidad total acumulada</div>
           </CardContent>
         </Card>
-        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-blue-200 dark:border-blue-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Ahorro Mensual</CardTitle>
-            <ArrowUp className="h-4 w-4 text-green-500" />
+            <ArrowUp className="h-4 w-4 text-blue-600 dark:text-blue-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-700 dark:text-green-400">${ahorroMensual.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">${ahorroMensual.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground">
               {ahorroMensual > 0 ? "Ahorrado este mes" : "Sin ahorros este mes"}
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
+        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-purple-200 dark:border-purple-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Mayor Ahorro Individual</CardTitle>
-            <CreditCard className="h-4 w-4 text-muted-foreground" />
+            <CreditCard className="h-4 w-4 text-purple-600 dark:text-purple-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">
               {ahorros.length > 0
                 ? `$${ahorros
                     .reduce((max, ahorro) => (ahorro.cantidad > max.cantidad ? ahorro : max), ahorros[0])
@@ -374,23 +413,23 @@ export default function AhorrosPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-gray-100 dark:bg-gray-800 shadow-md hover:shadow-lg transition-shadow duration-200">
+        <Card className="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/20 dark:to-amber-800/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-amber-200 dark:border-amber-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Ahorros Registrados</CardTitle>
-            <PiggyBank className="h-4 w-4 text-green-500" />
+            <PiggyBank className="h-4 w-4 text-amber-600 dark:text-amber-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{ahorros.length}</div>
+            <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">{ahorros.length}</div>
             <div className="text-xs text-muted-foreground">Total de fondos de ahorro</div>
           </CardContent>
         </Card>
       </div>
 
       {error && (
-        <Card>
+        <Card className="bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 animate-fadeIn">
           <CardContent className="p-6 text-center">
             <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
-            <Button onClick={() => window.location.reload()}>Reintentar</Button>
+            <Button onClick={() => window.location.reload()} className="bg-red-600 hover:bg-red-700 transition-all duration-300">Reintentar</Button>
           </CardContent>
         </Card>
       )}
@@ -401,22 +440,21 @@ export default function AhorrosPage() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar ahorro por nombre o descripción..."
-              className="pl-8 w-full sm:w-[300px]"
+              placeholder="Buscar ahorro por nombre..."
+              className="pl-8 w-full sm:w-[300px] transition-all duration-300 focus:ring-2 focus:ring-green-500 bg-white dark:bg-gray-800"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           <div className="flex gap-2 w-full sm:w-auto justify-end">
-            <Button variant="outline" size="icon">
+            <Button variant="outline" size="icon" className="transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-800">
               <Filter className="h-4 w-4" />
               <span className="sr-only">Filtrar</span>
             </Button>
-
           </div>
         </div>
 
-        <Card>
+        <Card className="animate-fadeIn bg-white dark:bg-gray-800 shadow-lg">
           <CardContent className="p-0">
             {isLoading ? (
               <div className="flex justify-center items-center py-8">
@@ -424,11 +462,14 @@ export default function AhorrosPage() {
                 <span className="ml-2 text-muted-foreground">Cargando ahorros...</span>
               </div>
             ) : filteredAhorros.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-muted-foreground animate-fadeIn">
                 <PiggyBank className="mx-auto h-12 w-12 mb-4" />
                 <p className="text-lg">No se encontraron ahorros que coincidan con tu búsqueda.</p>
                 <p className="mb-4">Intenta ajustar tu término de búsqueda o crea un nuevo ahorro.</p>
-                <Button className="bg-green-600 hover:bg-green-700" onClick={() => setOpenDialog(true)}>
+                <Button 
+                  className="bg-green-600 hover:bg-green-700 transition-all duration-300 hover:scale-105" 
+                  onClick={() => setOpenDialog(true)}
+                >
                   <Plus className="mr-2 h-4 w-4" />
                   Registrar Ahorro
                 </Button>
@@ -436,9 +477,8 @@ export default function AhorrosPage() {
             ) : (
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="bg-gray-50 dark:bg-gray-800/50">
                     <TableHead>Nombre</TableHead>
-                    {/* <TableHead>Descripción</TableHead> */} {/* Eliminada */}
                     <TableHead>Fecha Inicio</TableHead>
                     <TableHead>Fecha Final</TableHead>
                     <TableHead className="text-right">Cantidad</TableHead>
@@ -447,7 +487,10 @@ export default function AhorrosPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredAhorros.map((ahorro) => (
-                    <TableRow key={ahorro.id}>
+                    <TableRow 
+                      key={ahorro.id} 
+                      className="transition-all duration-300 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                    >
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
@@ -456,7 +499,6 @@ export default function AhorrosPage() {
                           <span className="font-medium">{ahorro.nombre}</span>
                         </div>
                       </TableCell>
-                      {/* <TableCell>{ahorro.descripcion || "N/A"}</TableCell> */} {/* Eliminada */}
                       <TableCell>{formatDate(ahorro.fecha)}</TableCell>
                       <TableCell>{formatDate(ahorro.fecha_Final)}</TableCell>
                       <TableCell className="text-right font-medium text-green-600 dark:text-green-400">
@@ -464,18 +506,39 @@ export default function AhorrosPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(ahorro)}>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => {
+                              setSelectedAhorro(ahorro);
+                              setOpenAddMoneyDialog(true);
+                            }}
+                            className="text-green-600 hover:text-green-700 transition-all duration-300 hover:bg-green-50 dark:hover:bg-green-900/20"
+                          >
+                            <Coins className="h-4 w-4" />
+                            <span className="sr-only">Añadir dinero</span>
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => handleEdit(ahorro)}
+                            className="transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                          >
                             <Edit className="h-4 w-4" />
                             <span className="sr-only">Editar</span>
                           </Button>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="text-red-600 dark:text-red-400">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-red-600 dark:text-red-400 transition-all duration-300 hover:bg-red-50 dark:hover:bg-red-900/20"
+                              >
                                 <Trash2 className="h-4 w-4" />
                                 <span className="sr-only">Eliminar</span>
                               </Button>
                             </AlertDialogTrigger>
-                            <AlertDialogContent>
+                            <AlertDialogContent className="animate-scaleIn">
                               <AlertDialogHeader>
                                 <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                 <AlertDialogDescription>
@@ -484,9 +547,11 @@ export default function AhorrosPage() {
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogCancel className="transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-800">
+                                  Cancelar
+                                </AlertDialogCancel>
                                 <AlertDialogAction
-                                  className="bg-red-600 hover:bg-red-700"
+                                  className="bg-red-600 hover:bg-red-700 transition-all duration-300"
                                   onClick={() => handleDelete(ahorro.id || 0)}
                                 >
                                   Eliminar
@@ -504,6 +569,51 @@ export default function AhorrosPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Dialog para añadir dinero */}
+      <Dialog open={openAddMoneyDialog} onOpenChange={setOpenAddMoneyDialog}>
+        <DialogContent className="animate-scaleIn">
+          <DialogHeader>
+            <DialogTitle>Añadir dinero al ahorro</DialogTitle>
+            <DialogDescription>
+              Ingresa la cantidad que deseas añadir a "{selectedAhorro?.nombre}"
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="cantidad-añadir">Cantidad a añadir</Label>
+              <Input
+                id="cantidad-añadir"
+                type="number"
+                placeholder="0.00"
+                value={addMoneyAmount}
+                onChange={(e) => setAddMoneyAmount(e.target.value)}
+                className="transition-all duration-300 focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOpenAddMoneyDialog(false);
+                setAddMoneyAmount("");
+                setSelectedAhorro(null);
+              }}
+              className="transition-all duration-300 hover:bg-gray-100"
+            >
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-green-600 hover:bg-green-700 transition-all duration-300 hover:scale-105" 
+              onClick={handleAddMoney} 
+              disabled={isLoading || !addMoneyAmount}
+            >
+              {isLoading ? "Añadiendo..." : "Añadir"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

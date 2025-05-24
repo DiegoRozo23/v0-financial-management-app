@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-
+import ReactDOM from "react-dom"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -32,25 +32,24 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/ui/chart"
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from "@/components/ui/chart"
 import { apiService, type Objetivo, type Frecuencia } from "@/services/api-service"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 
 // Tipo extendido para manejar objetivos con datos adicionales de progreso
-interface ObjetivoExtendido extends Objetivo {
+interface ObjetivoExtendido extends Omit<Objetivo, 'frecuencia'> {
   porcentaje: number
-  actual: number // Aseguramos que 'actual' esté presente y sea numérico
+  actual: number
   completado?: boolean
   fechaCompletado?: string
-  // Si tu tipo 'Objetivo' real del api-service incluye 'nombre', 'descripcion' y 'frecuencia',
-  // asegúrate de que estén definidos aquí también si los usas para renderizado.
-  nombre: string // Asumiendo que apiService.Objetivo tiene 'nombre'
-  frecuencia?: Frecuencia // Asumiendo que apiService.Objetivo puede tener 'frecuencia'
-  descripcion?: string // Asumiendo que apiService.Objetivo puede tener una segunda 'descripcion' (para UI)
+  nombre: string
+  frecuencia?: Frecuencia
+  descripcion: string
 }
 
 export default function ObjetivosPage() {
-  const [openDialog, setOpenDialog] = useState<"nuevo" | "editar" | "ahorro" | null>(null)
+  const [openDialog, setOpenDialog] = useState<"nuevo" | "editar" | "ahorro" | "advertencia" | null>(null)
   const [objetivos, setObjetivos] = useState<ObjetivoExtendido[]>([])
   const [objetivosCompletados, setObjetivosCompletados] = useState<ObjetivoExtendido[]>([])
   const [objetivoActual, setObjetivoActual] = useState<ObjetivoExtendido | null>(null)
@@ -71,6 +70,31 @@ export default function ObjetivosPage() {
   const [exportLoading, setExportLoading] = useState(false)
   const [showExportOptions, setShowExportOptions] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isGraphMinimized, setIsGraphMinimized] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const objectivesPerPage = 5
+  const [activeTab, setActiveTab] = useState<"activos" | "completados">("activos")
+  const [progresoFilter, setProgresoFilter] = useState<string>("todos")
+
+  // Función para filtrar objetivos por progreso
+  const filterObjetivosByProgreso = (objetivos: ObjetivoExtendido[]) => {
+    switch (progresoFilter) {
+      case "0-25":
+        return objetivos.filter(obj => obj.porcentaje <= 25);
+      case "26-50":
+        return objetivos.filter(obj => obj.porcentaje > 25 && obj.porcentaje <= 50);
+      case "51-75":
+        return objetivos.filter(obj => obj.porcentaje > 50 && obj.porcentaje <= 75);
+      case "76-99":
+        return objetivos.filter(obj => obj.porcentaje > 75 && obj.porcentaje < 100);
+      case "completados":
+        return objetivos.filter(obj => obj.porcentaje === 100);
+      case "pendientes":
+        return objetivos.filter(obj => obj.porcentaje < 100);
+      default:
+        return objetivos;
+    }
+  }
 
   // Cargar datos al montar el componente
   useEffect(() => {
@@ -156,11 +180,10 @@ export default function ObjetivosPage() {
     setIsLoading(true);
     setError(null);
 
-    // Validación según los campos que el backend espera (descripcion, meta, actual)
-    // 'nombre' del frontend se mapea a 'descripcion' del backend
+    // Validación básica
     if (!formData.nombre || !formData.meta || !formData.actual) {
       toast({
-        title: "Error de validación",
+        title: "Error",
         description: "Por favor completa el nombre, meta y monto actual del objetivo.",
         variant: "destructive",
       });
@@ -168,17 +191,25 @@ export default function ObjetivosPage() {
       return;
     }
 
+    const montoActual = Number.parseFloat(formData.actual);
+    const montoMeta = Number.parseFloat(formData.meta);
+    const porcentaje = Math.round((montoActual / montoMeta) * 100);
+
+    if (porcentaje > 100) {
+      setOpenDialog("advertencia");
+      setIsLoading(false);
+      return;
+    }
+
     try {
       // Prepara los datos para enviar al backend
-      // Mapea 'nombre' del frontend a 'descripcion' del backend
       const dataToSave = {
-        descripcion: formData.nombre, // ¡Este es el cambio clave!
+        descripcion: formData.nombre,
         meta: Number.parseFloat(formData.meta),
-        actual: Number.parseFloat(formData.actual || "0"), // Asegura que 'actual' sea un número, por defecto 0 si está vacío
-        // Los campos 'frecuencia', 'descripcion' (la secundaria del formulario), 'fechaInicio', 'fechaFin'
-        // NO se incluyen aquí porque el modelo ObjetivosFinancieros de Django NO los tiene.
-        // Si tu backend espera estos campos, deberás revisar el modelo de Django o el tipo 'Objetivo' en api-service.ts
-      };
+        actual: Number.parseFloat(formData.actual || "0"),
+        nombre: formData.nombre,
+        frecuencia: formData.frecuencia
+      } as Omit<Objetivo, "id">;
 
       if (objetivoActual) {
         // Actualizar objetivo existente
@@ -240,15 +271,26 @@ export default function ObjetivosPage() {
   };
 
   const handleEdit = (objetivo: ObjetivoExtendido) => {
+    // Validar que el monto actual no supere la meta
+    const porcentaje = Math.round((Number(objetivo.actual) / Number(objetivo.meta)) * 100);
+    if (porcentaje > 100) {
+      toast({
+        title: "Error",
+        description: "El monto actual no puede superar el monto objetivo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setObjetivoActual(objetivo);
     setFormData({
-      nombre: objetivo.nombre, // Carga el nombre del objetivo para el campo 'nombre' del formulario
-      descripcion: objetivo.descripcion || '', // Carga la descripción del objetivo (aunque no se use al guardar)
+      nombre: objetivo.nombre,
+      descripcion: objetivo.descripcion || '',
       actual: objetivo.actual.toString(),
       meta: objetivo.meta.toString(),
-      frecuencia: objetivo.frecuencia || { id: 0, Tipo: '' }, // Carga la frecuencia (aunque no se use al guardar)
-      fechaInicio: new Date().toISOString().split("T")[0], // Asume fecha actual o ajusta si el objetivo tiene fecha de inicio
-      fechaFin: "", // Asume vacío o ajusta
+      frecuencia: objetivo.frecuencia || { id: 0, Tipo: '' },
+      fechaInicio: new Date().toISOString().split("T")[0],
+      fechaFin: "",
     });
     setOpenDialog("editar");
   }
@@ -302,14 +344,23 @@ export default function ObjetivosPage() {
     if (objetivoActual) {
       const monto = Number.parseFloat(montoAhorro);
       const nuevoActual = objetivoActual.actual + monto;
+      const nuevoPorcentaje = Math.round((nuevoActual / objetivoActual.meta) * 100);
+
+      if (nuevoPorcentaje > 100) {
+        setOpenDialog("advertencia");
+        setIsLoading(false);
+        return;
+      }
 
       try {
         // Prepara los datos para enviar al backend (solo 'descripcion', 'meta', 'actual')
         const dataToUpdateForBackend = {
-          descripcion: objetivoActual.nombre, // Usa el nombre actual como descripción para el backend
+          descripcion: objetivoActual.nombre,
           meta: objetivoActual.meta,
           actual: nuevoActual,
-        };
+          nombre: objetivoActual.nombre,
+          frecuencia: objetivoActual.frecuencia
+        } as Omit<Objetivo, "id">;
 
         // Asegúrate de que objetivoActual.id no sea undefined antes de llamar a la API
         if (objetivoActual.id === undefined) {
@@ -327,7 +378,7 @@ export default function ObjetivosPage() {
                 return {
                     ...obj,
                     actual: updatedObjetivoBackend.actual, // Usa el valor 'actual' devuelto por el backend
-                    porcentaje: Math.round((updatedObjetivoBackend.actual / updatedObjetivoBackend.meta) * 100),
+                    porcentaje: nuevoPorcentaje,
                 };
             }
             return obj;
@@ -342,7 +393,7 @@ export default function ObjetivosPage() {
                      return {
                         ...obj,
                         actual: updatedObjetivoBackend.actual,
-                        porcentaje: Math.round((updatedObjetivoBackend.actual / updatedObjetivoBackend.meta) * 100),
+                        porcentaje: nuevoPorcentaje,
                      };
                 }
                 return obj;
@@ -402,23 +453,43 @@ export default function ObjetivosPage() {
 
 
   // Datos para el gráfico de progreso
-  const progresoData = objetivos.map((obj) => ({
-    name: obj.nombre,
-    actual: obj.actual,
-    objetivo: obj.meta,
-    porcentaje: obj.porcentaje,
-  }))
+  const progresoData = filterObjetivosByProgreso(objetivos)
+    .filter(obj => obj.porcentaje < 100)
+    .sort((a, b) => b.porcentaje - a.porcentaje) // Ordenar de mayor a menor
+    .map((obj) => ({
+      ...obj,
+      name: obj.nombre,
+      porcentaje: obj.porcentaje,
+      montoActual: obj.actual,
+      montoMeta: obj.meta,
+      color: obj.porcentaje >= 75 ? '#22c55e' : // Verde para 75-100%
+             obj.porcentaje >= 50 ? '#84cc16' : // Verde-amarillo para 50-75%
+             obj.porcentaje >= 25 ? '#eab308' : // Amarillo para 25-50%
+             '#f97316' // Naranja para 0-25%
+    }))
 
-  // Función para filtrar objetivos
-  const filteredObjetivos = objetivos.filter(objetivo =>
-    objetivo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (objetivo.descripcion && objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase()))
-  )
+  // Filtrar objetivos según búsqueda y filtro de progreso
+  const filteredObjetivos = filterObjetivosByProgreso(
+    objetivos.filter(objetivo =>
+      (objetivo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (objetivo.descripcion && objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase()))) &&
+      objetivo.porcentaje < 100
+    )
+  );
 
-  const filteredObjetivosCompletados = objetivosCompletados.filter(objetivo =>
+  const filteredObjetivosCompletados = objetivosCompletados.filter((objetivo: ObjetivoExtendido) =>
     objetivo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (objetivo.descripcion && objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase()))
-  )
+    objetivo.descripcion.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const hasMoreObjectives = objetivos.length > objectivesPerPage * currentPage
+
+  const scrollToObjetivo = (id: number) => {
+    const element = document.getElementById(`objetivo-${id}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
 
   if (isFetching) {
     return (
@@ -439,12 +510,36 @@ export default function ObjetivosPage() {
   return (
     <div className="space-y-6">
       <Toaster />
+      
+      {/* Modal de advertencia */}
+      <AlertDialog open={openDialog === "advertencia"} onOpenChange={(open) => !open && setOpenDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Monto excede el límite</AlertDialogTitle>
+            <AlertDialogDescription>
+              El monto ingresado superaría el 100% del objetivo.
+
+              {!objetivoActual && (
+                <span className="block mt-2">
+                  El monto actual no puede ser mayor que el monto objetivo.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setOpenDialog(null)}>
+              Entendido
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Objetivos Financieros</h1>
           <p className="text-muted-foreground">Establece y haz seguimiento a tus metas financieras.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           <Dialog
             open={openDialog === "nuevo"}
             onOpenChange={(open) => (open ? setOpenDialog("nuevo") : setOpenDialog(null))}
@@ -512,9 +607,7 @@ export default function ObjetivosPage() {
                     onChange={handleInputChange}
                   />
                 </div>
-                {/* NOTA: El campo Descripción (adicional) no es parte del modelo 'ObjetivosFinancieros'
-                            que proporcionaste en Django (el 'nombre' del frontend ya es la 'descripcion' del backend).
-                            Si es necesario, el backend necesitaría un segundo campo de descripción. */}
+
                 <div className="grid gap-2">
                   <Label htmlFor="descripcion-nuevo">Descripción Adicional </Label>
                   <Input
@@ -674,30 +767,149 @@ export default function ObjetivosPage() {
         </div>
       </div>
 
-      {/* Barra de búsqueda */}
-      <div className="relative">
-        <Input
-          type="text"
-          placeholder="Buscar objetivos..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10"
-        />
-        <svg
-          className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-          />
-        </svg>
+      <div className="flex flex-col sm:flex-row justify-between gap-4 mb-6">
+        <Tabs defaultValue="activos" value={activeTab} onValueChange={(value) => {
+          setActiveTab(value as "activos" | "completados");
+          if (value === "completados") {
+            setProgresoFilter("todos");
+          }
+        }} className="w-full sm:w-auto">
+          <TabsList>
+            <TabsTrigger value="activos">Objetivos Activos</TabsTrigger>
+            <TabsTrigger value="completados">Objetivos Completados</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-none">
+            <Input
+              type="text"
+              placeholder="Buscar objetivos..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full sm:w-[350px] pl-10"
+            />
+            <svg
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
+
+          {activeTab === "activos" && (
+            <Select value={progresoFilter} onValueChange={setProgresoFilter}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="Filtrar por progreso" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="0-25">0-25%</SelectItem>
+                <SelectItem value="26-50">26-50%</SelectItem>
+                <SelectItem value="51-75">51-75%</SelectItem>
+                <SelectItem value="76-99">76-99%</SelectItem>
+                <SelectItem value="pendientes">Sin completar</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
       </div>
+
+      {/* Gráfico de progreso */}
+      {objetivos.length > 0 && !searchTerm && activeTab === "activos" && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Progreso de Objetivos</CardTitle>
+              <CardDescription>Visualización del progreso hacia tus metas financieras</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsGraphMinimized(!isGraphMinimized)}
+              className="ml-2"
+            >
+              {isGraphMinimized ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/></svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/></svg>
+              )}
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className={`transition-all duration-300 ease-in-out ${isGraphMinimized ? 'h-0 opacity-0' : 'h-[250px] opacity-100'}`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={progresoData}
+                  margin={{
+                    top: 5,
+                    right: 30,
+                    left: 20,
+                    bottom: 5,
+                  }}
+                  onClick={(data) => {
+                    if (data && data.activePayload && data.activePayload[0]) {
+                      const objetivo = data.activePayload[0].payload;
+                      if (objetivo && objetivo.id) {
+                        scrollToObjetivo(objetivo.id);
+                      }
+                    }
+                  }}
+                  className="cursor-pointer"
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tickFormatter={(str) => {
+                      return str.split(' ').slice(0, 2).join(' ');
+                    }}
+                  />
+                  <YAxis
+                    ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
+                    domain={[0, 100]}
+                    tickFormatter={(value) => `${value}%`}
+                  />
+                  <Tooltip
+                    formatter={(value, name, props) => {
+                      if (props.payload) {
+                        const { montoActual, montoMeta } = props.payload;
+                        return [
+                          <div key="tooltip" className="space-y-1">
+                            <p>Progreso: {value}%</p>
+                            <p>Actual: ${montoActual?.toLocaleString()}</p>
+                            <p>Meta: ${montoMeta?.toLocaleString()}</p>
+                          </div>
+                        ];
+                      }
+                      return [`${value}%`, 'Progreso'];
+                    }}
+                  />
+                  <Bar 
+                    dataKey="porcentaje" 
+                    name="Progreso" 
+                    cursor="pointer"
+                    animationBegin={0}
+                    animationDuration={1500}
+                    animationEasing="ease-in-out"
+                  >
+                    {progresoData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {error && (
         <Card>
@@ -708,198 +920,121 @@ export default function ObjetivosPage() {
         </Card>
       )}
 
-      {filteredObjetivos.length > 0 && !error && (
+      {/* Lista de objetivos */}
+      {filteredObjetivos.length > 0 && !error && activeTab === "activos" && (
         <div className="space-y-4">
-          {filteredObjetivos.map((objetivo) => (
-            <Card key={objetivo.id!} className="overflow-hidden">
-              <CardContent className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="font-semibold text-lg">{objetivo.nombre}</h3>
-                    {objetivo.descripcion && objetivo.descripcion !== objetivo.nombre && (
-                      <p className="text-sm text-muted-foreground mt-1">{objetivo.descripcion}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleAgregarAhorroDialog(objetivo)}
-                      className="text-green-600 dark:text-green-400 border-green-600 dark:border-green-400 hover:bg-green-50 dark:hover:bg-green-950 bg-background"
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Agregar
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleEdit(objetivo)}
-                      className="text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 bg-background"
-                    >
-                      <Edit className="h-4 w-4 mr-1" />
-                      Editar
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
-                        >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Eliminar
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-red-600 hover:bg-red-700"
-                            onClick={() => handleDelete(objetivo.id || 0)}
-                          >
-                            Eliminar
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium">
-                        Progreso: ${objetivo.actual?.toLocaleString()} de ${objetivo.meta?.toLocaleString()}
-                      </span>
-                      <span className="text-sm font-semibold text-green-600 dark:text-green-400">
-                        {objetivo.porcentaje}%
-                      </span>
-                    </div>
-                    <Progress 
-                      value={objetivo.porcentaje} 
-                      className="h-3 bg-gray-100 dark:bg-gray-800" 
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
-                      <p className="text-muted-foreground">Meta</p>
-                      <p className="font-semibold text-lg">${objetivo.meta?.toLocaleString()}</p>
-                    </div>
-                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
-                      <p className="text-muted-foreground">Falta</p>
-                      <p className="font-semibold text-lg text-orange-600 dark:text-orange-400">
-                        ${(objetivo.meta - objetivo.actual).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Mostrar mensaje cuando no hay resultados de búsqueda */}
-      {searchTerm && filteredObjetivos.length === 0 && filteredObjetivosCompletados.length === 0 && !error && (
-        <Card className="p-6 text-center">
-          <div className="text-muted-foreground">
-            <p className="text-lg">No se encontraron objetivos que coincidan con "{searchTerm}"</p>
-          </div>
-        </Card>
-      )}
-
-      {/* Mostrar mensaje cuando no hay objetivos en general */}
-      {objetivos.length === 0 && objetivosCompletados.length === 0 && !searchTerm && !error && (
-        <Card className="p-6 text-center">
-          <div className="text-muted-foreground py-12">
-            <Target className="mx-auto h-12 w-12 mb-4" />
-            <p className="text-lg">No tienes objetivos financieros registrados</p>
-            <p className="mb-4">Crea tu primer objetivo para comenzar a ahorrar</p>
-            <Button 
-              className="bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700" 
-              onClick={() => setOpenDialog("nuevo")}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Crear Objetivo
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Objetivos completados */}
-      {filteredObjetivosCompletados.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-xl font-bold tracking-tight mb-4">Objetivos Completados</h2>
-          <div className="space-y-4">
-            {filteredObjetivosCompletados.map((objetivo) => (
-              <Card key={objetivo.id!} className="overflow-hidden border-green-500">
+          {filteredObjetivos
+            .filter(obj => obj.porcentaje < 100)
+            .map((objetivo) => (
+              <Card 
+                key={objetivo.id!} 
+                id={`objetivo-${objetivo.id}`}
+                className="overflow-hidden transition-all duration-200 hover:shadow-lg cursor-pointer group"
+                onClick={() => scrollToObjetivo(objetivo.id!)}
+              >
                 <CardContent className="p-6">
                   <div className="flex justify-between items-start mb-4">
                     <div>
-                      <h3 className="font-semibold text-lg flex items-center">
-                        {objetivo.nombre}
-                        <Check className="h-5 w-5 text-green-500 ml-2" />
-                      </h3>
+                      <h3 className="font-semibold text-lg">{objetivo.nombre}</h3>
+                      {objetivo.descripcion && objetivo.descripcion !== objetivo.nombre && (
+                        <p className="text-sm text-muted-foreground mt-1">{objetivo.descripcion}</p>
+                      )}
                       <p className="text-sm text-muted-foreground mt-1">
-                        Completado el: {objetivo.fechaCompletado ? formatDate(objetivo.fechaCompletado) : 'N/A'}
+                        Inicio: {formatDate(formData.fechaInicio)}
                       </p>
                     </div>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
+                    <div className="flex flex-col sm:flex-row gap-4 items-start">
+                      <div className="text-sm text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                        <p className="font-medium">Actual: ${objetivo.actual?.toLocaleString()}</p>
+                        <p className="text-muted-foreground">Falta: ${(objetivo.meta - objetivo.actual).toLocaleString()}</p>
+                      </div>
+                      <div className="flex flex-row gap-2">
                         <Button 
                           variant="outline" 
-                          size="sm"
-                          className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
+                          size="sm" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAgregarAhorroDialog(objetivo);
+                          }}
+                          className="text-green-600 dark:text-green-400 border-green-600 dark:border-green-400 hover:bg-green-50 dark:hover:bg-green-950 bg-background"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Eliminar
+                          <Plus className="h-4 w-4 sm:mr-1" />
+                          <span className="hidden sm:inline">Agregar</span>
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo completado.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-red-600 hover:bg-red-700"
-                            onClick={() => handleDelete(objetivo.id || 0)}
-                          >
-                            Eliminar
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(objetivo);
+                          }}
+                          className="text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 bg-background"
+                        >
+                          <Edit className="h-4 w-4 sm:mr-1" />
+                          <span className="hidden sm:inline">Editar</span>
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
+                            >
+                              <Trash2 className="h-4 w-4 sm:mr-1" />
+                              <span className="hidden sm:inline">Eliminar</span>
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-red-600 hover:bg-red-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(objetivo.id || 0);
+                                }}
+                              >
+                                Eliminar
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="space-y-6">
                     <div>
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-medium">Meta alcanzada</span>
-                        <span className="text-sm font-semibold text-green-600">100%</span>
+                        <span className="text-sm font-medium">
+                          Progreso: ${objetivo.actual?.toLocaleString()} de ${objetivo.meta?.toLocaleString()}
+                        </span>
+                        <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                          {objetivo.porcentaje}%
+                        </span>
                       </div>
-                      <Progress value={100} className="h-3 bg-gray-100" />
+                      <Progress 
+                        value={objetivo.porcentaje} 
+                        className="h-3 bg-gray-100 dark:bg-gray-800" 
+                      />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
-                        <p className="text-muted-foreground">Meta alcanzada</p>
+                        <p className="text-muted-foreground">Meta</p>
                         <p className="font-semibold text-lg">${objetivo.meta?.toLocaleString()}</p>
                       </div>
                       <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
-                        <p className="text-muted-foreground">Ahorrado</p>
-                        <p className="font-semibold text-lg text-green-600 dark:text-green-400">
-                          ${objetivo.actual?.toLocaleString()}
+                        <p className="text-muted-foreground">Falta</p>
+                        <p className="font-semibold text-lg text-orange-600 dark:text-orange-400">
+                          ${(objetivo.meta - objetivo.actual).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -907,7 +1042,102 @@ export default function ObjetivosPage() {
                 </CardContent>
               </Card>
             ))}
+        </div>
+      )}
+
+      {/* Mensaje cuando no hay resultados */}
+      {((activeTab === "activos" && filteredObjetivos.length === 0) || 
+        (activeTab === "completados" && filteredObjetivosCompletados.length === 0)) && !error && (
+        <Card className="p-6 text-center">
+          <div className="text-muted-foreground">
+            <p className="text-lg">
+              {searchTerm 
+                ? `No se encontraron objetivos que coincidan con "${searchTerm}"`
+                : activeTab === "completados"
+                ? "No hay objetivos completados"
+                : "No hay objetivos activos"}
+            </p>
           </div>
+        </Card>
+      )}
+
+      {/* Objetivos completados */}
+      {filteredObjetivosCompletados.length > 0 && activeTab === "completados" && (
+        <div className="space-y-4">
+          {filteredObjetivosCompletados.map((objetivo) => (
+            <Card key={objetivo.id!} className="overflow-hidden border-green-500">
+              <CardContent className="p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-semibold text-lg flex items-center">
+                      {objetivo.nombre}
+                      <Check className="h-5 w-5 text-green-500 ml-2" />
+                    </h3>
+                    {objetivo.fechaCompletado && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Completado el: {formatDate(objetivo.fechaCompletado)}
+                      </p>
+                    )}
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Inicio: {formatDate(formData.fechaInicio)}
+                    </p>
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        className="text-red-600 dark:text-red-400 border-red-600 dark:border-red-400 hover:bg-red-50 dark:hover:bg-red-950 bg-background"
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Eliminar
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Esta acción no se puede deshacer. Esto eliminará permanentemente el objetivo completado.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-red-600 hover:bg-red-700"
+                          onClick={() => handleDelete(objetivo.id || 0)}
+                        >
+                          Eliminar
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium">Meta alcanzada</span>
+                      <span className="text-sm font-semibold text-green-600">100%</span>
+                    </div>
+                    <Progress value={100} className="h-3 bg-gray-100" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                      <p className="text-muted-foreground">Meta alcanzada</p>
+                      <p className="font-semibold text-lg">${objetivo.meta?.toLocaleString()}</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border dark:border-gray-700">
+                      <p className="text-muted-foreground">Ahorrado</p>
+                      <p className="font-semibold text-lg text-green-600 dark:text-green-400">
+                        ${objetivo.actual?.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
     </div>
