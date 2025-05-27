@@ -114,11 +114,7 @@ export default function ObjetivosPage() {
         // Transformar objetivos para incluir campos adicionales de progreso
         const objetivosExtendidos = objetivosData.map((objetivo) => ({
           ...objetivo,
-          // Si tu backend NO devuelve 'nombre' pero sí 'descripcion',
-          // aquí deberías mapear objetivo.descripcion a objetivo.nombre si lo usas en el UI.
-          // Asumimos que apiService.Objetivo ya tiene 'nombre' y 'frecuencia'.
-          // Si el backend solo devuelve 'descripcion', usa objetivo.descripcion para el 'nombre' del frontend.
-          nombre: objetivo.nombre || objetivo.descripcion, // Usa nombre si existe, si no, usa descripcion
+          nombre: objetivo.nombre || objetivo.descripcion, // Asegurar que siempre haya un nombre
           porcentaje: Math.round((objetivo.actual / objetivo.meta) * 100),
           completado: (objetivo.actual >= objetivo.meta), // Determinar si está completado
         }))
@@ -204,11 +200,11 @@ export default function ObjetivosPage() {
     try {
       // Prepara los datos para enviar al backend
       const dataToSave = {
-        descripcion: formData.nombre,
+        nombre: formData.nombre, // Asegurar que se use el nombre del formulario
+        descripcion: formData.nombre, // Usar el mismo nombre como descripción
         meta: Number.parseFloat(formData.meta),
-        actual: Number.parseFloat(formData.actual || "0"),
-        nombre: formData.nombre,
-        frecuencia: formData.frecuencia
+        actual: Number.parseFloat(formData.actual),
+        frecuencia: formData.frecuencia // Añadir el campo frecuencia requerido
       } as Omit<Objetivo, "id">;
 
       if (objetivoActual) {

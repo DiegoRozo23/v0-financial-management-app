@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -11,43 +10,86 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
+import { apiService } from "@/services/api-service"
+import { authService } from "@/services/auth-service"
+
 
 export default function ConfiguracionPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
-    nombre: "Usuario",
+    nombre: "",
     newPassword: "",
     confirmPassword: "",
+    currentPassword: "",
   })
+
+  useEffect(() => {
+    const userData = authService.getUserData()
+    if (userData) {
+      setFormData(prev => ({ ...prev, nombre: userData.username }))
+    }
+  }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { id, value } = e.target
     setFormData((prev) => ({ ...prev, [id]: value }))
   }
 
-  const handleSave = () => {
-    setIsLoading(true)
-
-    setTimeout(() => {
-      setIsLoading(false)
+  const handleSave = async () => {
+    if (!formData.nombre.trim()) {
       toast({
-        title: "Configuración guardada",
-        description: "Tus cambios han sido guardados correctamente.",
+        title: "Error",
+        description: "El nombre de usuario no puede estar vacío",
+        variant: "destructive",
       })
-    }, 1500)
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const response = await apiService.updateUser({ username: formData.nombre.trim() })
+      
+      if (response?.message) {
+        // Actualizar el nombre de usuario en las cookies
+        const userData = authService.getUserData()
+        if (userData) {
+          authService.logout() // Limpiar datos actuales
+          // Guardar nuevo nombre de usuario
+        }
+
+        toast({
+          title: "Configuración guardada",
+          description: response.message || "Tu nombre de usuario ha sido actualizado correctamente.",
+        })
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo actualizar el nombre de usuario.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleUpdatePassword = () => {
-    setIsLoading(true)
-
+  const handleUpdatePassword = async () => {
     // Validación básica
-    if (!formData.newPassword || !formData.confirmPassword) {
+    if (!formData.currentPassword || !formData.newPassword || !formData.confirmPassword) {
       toast({
         title: "Error",
         description: "Por favor completa todos los campos",
         variant: "destructive",
       })
-      setIsLoading(false)
+      return
+    }
+
+    if (formData.newPassword.length < 6) {
+      toast({
+        title: "Error",
+        description: "La contraseña debe tener al menos 6 caracteres",
+        variant: "destructive",
+      })
       return
     }
 
@@ -57,24 +99,42 @@ export default function ConfiguracionPage() {
         description: "Las contraseñas nuevas no coinciden",
         variant: "destructive",
       })
-      setIsLoading(false)
       return
     }
 
-    setTimeout(() => {
-      setIsLoading(false)
-      toast({
-        title: "Contraseña actualizada",
-        description: "Tu contraseña ha sido actualizada correctamente.",
+    setIsLoading(true)
+    try {
+      const response = await apiService.fetchWithAuth("/api/cambiar_password/", {
+        method: "PATCH",
+        body: JSON.stringify({
+          password_actual: formData.currentPassword,
+          nueva_password: formData.newPassword,
+        }),
       })
+      
+      if (response?.mensaje) {
+        toast({
+          title: "Contraseña actualizada",
+          description: response.mensaje || "Tu contraseña ha sido actualizada correctamente.",
+        })
 
-      // Limpiar campos de contraseña
-      setFormData((prev) => ({
-        ...prev,
-        newPassword: "",
-        confirmPassword: "",
-      }))
-    }, 1500)
+        // Limpiar campos de contraseña
+        setFormData((prev) => ({
+          ...prev,
+          currentPassword: "",
+          newPassword: "",
+          confirmPassword: "",
+        }))
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo actualizar la contraseña.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -120,6 +180,10 @@ export default function ConfiguracionPage() {
               <div className="space-y-4">
                 <h3 className="text-lg font-medium">Cambiar Contraseña</h3>
                 <div className="grid gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="currentPassword">Contraseña Actual</Label>
+                    <Input id="currentPassword" type="password" value={formData.currentPassword} onChange={handleInputChange} />
+                  </div>
                   <div className="grid gap-2">
                     <Label htmlFor="newPassword">Nueva Contraseña</Label>
                     <Input id="newPassword" type="password" value={formData.newPassword} onChange={handleInputChange} />

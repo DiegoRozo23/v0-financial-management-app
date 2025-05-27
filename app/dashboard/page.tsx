@@ -282,7 +282,7 @@ export default function DashboardPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Target className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">{objetivo.nombre}</span>
+                            <span className="text-sm font-medium">{objetivo.nombre || objetivo.descripcion}</span>
                           </div>
                           <span className="text-sm">
                             ${objetivo.actual.toLocaleString()} / ${objetivo.meta.toLocaleString()}

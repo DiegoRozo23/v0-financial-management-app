@@ -440,22 +440,17 @@ export default function AhorrosPage() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar ahorro por nombre..."
-              className="pl-8 w-full sm:w-[300px] transition-all duration-300 focus:ring-2 focus:ring-green-500 bg-white dark:bg-gray-800"
+              placeholder="Buscar ahorro..."
+              className="pl-8 w-full sm:w-[250px] bg-background"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div className="flex gap-2 w-full sm:w-auto justify-end">
-            <Button variant="outline" size="icon" className="transition-all duration-300 hover:bg-gray-100 dark:hover:bg-gray-800">
-              <Filter className="h-4 w-4" />
-              <span className="sr-only">Filtrar</span>
-            </Button>
-          </div>
+
         </div>
 
-        <Card className="animate-fadeIn bg-white dark:bg-gray-800 shadow-lg">
-          <CardContent className="p-0">
+        <Card>
+          <CardContent className="p-0 bg-background">
             {isLoading ? (
               <div className="flex justify-center items-center py-8">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -476,8 +471,8 @@ export default function AhorrosPage() {
               </div>
             ) : (
               <Table>
-                <TableHeader>
-                  <TableRow className="bg-gray-50 dark:bg-gray-800/50">
+                <TableHeader className="bg-background">
+                  <TableRow>
                     <TableHead>Nombre</TableHead>
                     <TableHead>Fecha Inicio</TableHead>
                     <TableHead>Fecha Final</TableHead>

@@ -49,6 +49,16 @@ export interface Objetivo {
   actual: number; // Added actual
 }
 
+export interface FiltroFecha {
+  fecha_inicio: string
+  fecha_fin: string
+}
+
+export interface UserUpdate {
+  username?: string
+  password?: string
+}
+
 // Servicio API genérico
 export const apiService = {
   // Método para realizar solicitudes autenticadas
@@ -60,7 +70,7 @@ export const apiService = {
       throw new Error("No autenticado - Token no disponible")
     }
 
-    console.log("Token actual:", token) // Debug: mostrar token
+    console.log("Token completo:", token)
 
     const defaultOptions: RequestInit = {
       headers: {
@@ -78,44 +88,33 @@ export const apiService = {
       },
     }
 
-    console.log("Realizando petición a:", `${API_URL}${endpoint}`)
-    console.log("Opciones de la petición:", {
-      ...finalOptions,
-      headers: {
-        ...finalOptions.headers,
-        Authorization: `Bearer ${token.substring(0, 10)}...` // Solo mostrar parte del token por seguridad
-      }
-    })
-
     try {
       const response = await fetch(`${API_URL}${endpoint}`, finalOptions)
+      
+      // Si la respuesta es 204 (No Content), retornar null
+      if (response.status === 204) {
+        return null
+      }
+
+      // Intentar parsear la respuesta como JSON
+      const text = await response.text()
       let data
       
       try {
-        data = await response.json()
+        data = text ? JSON.parse(text) : null
       } catch (e) {
-        console.log("No se pudo parsear la respuesta como JSON:", e)
-        if (response.status === 204) {
-          return null // No content
-        }
-        throw new Error(`Error al parsear respuesta: ${response.statusText}`)
+        throw new Error(`Error al parsear respuesta: ${text || response.statusText}`)
       }
-
-      console.log("Respuesta del servidor:", {
-        status: response.status,
-        statusText: response.statusText,
-        data
-      })
 
       if (!response.ok) {
         throw new Error(
-          `Error en la solicitud: ${response.status} ${response.statusText}\nDetalle: ${JSON.stringify(data)}`
+          data?.message || data?.detail || `Error en la solicitud: ${response.status} ${response.statusText}`
         )
       }
 
       return data
     } catch (error) {
-      console.error("Error completo en fetchWithAuth:", error)
+      console.error("Error en fetchWithAuth:", error)
       throw error
     }
   },
@@ -261,5 +260,28 @@ export const apiService = {
       method: "POST",
       body: JSON.stringify({ monto, fecha }),
     });
+  },
+
+  // FILTRADO POR RANGO DE FECHAS
+  async getIngresosPorRango(filtro: FiltroFecha): Promise<Ingreso[]> {
+    return this.fetchWithAuth("/api/finanzas/I_rango/", {
+      method: "POST",
+      body: JSON.stringify(filtro),
+    })
+  },
+
+  async getGastosPorRango(filtro: FiltroFecha): Promise<Gasto[]> {
+    return this.fetchWithAuth("/api/finanzas/G_rango/", {
+      method: "POST",
+      body: JSON.stringify(filtro),
+    })
+  },
+
+  // ACTUALIZAR USUARIO
+  async updateUser(data: UserUpdate): Promise<any> {
+    return this.fetchWithAuth("/api/register/", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    })
   },
 }

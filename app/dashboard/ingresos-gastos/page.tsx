@@ -71,6 +71,10 @@ export default function IngresosGastosPage() {
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
   const [transaccionActual, setTransaccionActual] = useState<Transaccion | null>(null)
   const [frecuencias, setFrecuencias] = useState<Frecuencia[]>([])
+  const [fechaInicio, setFechaInicio] = useState<string>("")
+  const [fechaFin, setFechaFin] = useState<string>("")
+  const [isFilterDialogOpen, setIsFilterDialogOpen] = useState(false)
+  const [periodoSeleccionado, setPeriodoSeleccionado] = useState<string>("personalizado")
   interface FormData {
     descripcion: string
     cantidad: string
@@ -104,6 +108,10 @@ export default function IngresosGastosPage() {
           apiService.getGastos(),
           apiService.getGastosFijos()
         ])
+
+        console.log("Datos iniciales de ingresos:", ingresosData)
+        console.log("Datos iniciales de gastos:", gastosData)
+        console.log("Datos iniciales de gastos fijos:", gastosFijosData)
 
         // Transformar a formato unificado
         const ingresosFormateados: Transaccion[] = ingresosData.map((ingreso) => ({
@@ -142,6 +150,8 @@ export default function IngresosGastosPage() {
           (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
         )
 
+        console.log("Transacciones iniciales combinadas:", todasTransacciones)
+
         setTransacciones(todasTransacciones)
       } catch (err) {
         console.error("Error al cargar ingresos y gastos:", err)
@@ -173,6 +183,81 @@ export default function IngresosGastosPage() {
     fetchFrecuencias()
   }, [])
 
+  const handleFilter = async () => {
+    setIsFetching(true)
+    setError(null)
+
+    try {
+      // Obtener todos los datos filtrados por fecha
+      const [ingresosData, gastosData] = await Promise.all([
+        apiService.getIngresosPorRango({
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+        }),
+        apiService.getGastosPorRango({
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+        })
+      ])
+
+      console.log("Datos de ingresos recibidos:", ingresosData)
+      console.log("Datos de gastos recibidos:", gastosData)
+
+      // Obtener gastos fijos (sin filtro de fecha)
+      const gastosFijosData = await apiService.getGastosFijos()
+      console.log("Datos de gastos fijos recibidos:", gastosFijosData)
+
+      // Transformar a formato unificado
+      const ingresosFormateados: Transaccion[] = ingresosData.map((ingreso) => ({
+        id: `ingreso-${ingreso.id}`,
+        tipo: "ingreso",
+        descripcion: ingreso.descripcion || '',
+        cantidad: ingreso.cantidad,
+        fecha: ingreso.fecha,
+        originalId: ingreso.id,
+        esGastoFijo: false,
+      }))
+
+      const gastosFormateados: Transaccion[] = gastosData.map((gasto) => ({
+        id: `gasto-${gasto.id}`,
+        tipo: "gasto",
+        descripcion: gasto.descripcion,
+        cantidad: gasto.cantidad,
+        fecha: gasto.fecha,
+        originalId: gasto.id,
+        esGastoFijo: false,
+        frecuencia: undefined
+      }))
+
+      const gastosFijosFormateados: Transaccion[] = gastosFijosData.map((gastoFijo) => ({
+        id: `gasto-fijo-${gastoFijo.id}`,
+        tipo: "gasto",
+        descripcion: gastoFijo.descripcion,
+        cantidad: gastoFijo.cantidad,
+        fecha: gastoFijo.fecha,
+        originalId: gastoFijo.id,
+        esGastoFijo: true,
+        frecuencia: gastoFijo.frecuencia
+      }))
+
+      // Combinar todos los datos y ordenar por fecha
+      const todasTransacciones = [...ingresosFormateados, ...gastosFormateados, ...gastosFijosFormateados].sort(
+        (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()
+      )
+
+      console.log("Transacciones combinadas:", todasTransacciones)
+
+      setTransacciones(todasTransacciones)
+      setIsFilterDialogOpen(false)
+    } catch (err) {
+      console.error("Error al filtrar transacciones:", err)
+      setError("No se pudieron filtrar las transacciones. Intente nuevamente.")
+    } finally {
+      setIsFetching(false)
+    }
+  }
+
+  // Filtrar transacciones según el tab activo y búsqueda
   const filteredTransacciones = transacciones
     .filter((t) => {
       if (activeTab === "todos") return true;
@@ -421,6 +506,115 @@ export default function IngresosGastosPage() {
   const totalGastos = transacciones.filter((t) => t.tipo === "gasto").reduce((sum, t) => sum + t.cantidad, 0)
 
   const balance = totalIngresos - totalGastos
+
+  const getPeriodoFechas = (periodo: string) => {
+    const hoy = new Date()
+    const inicio = new Date()
+    
+    switch (periodo) {
+      case "semana":
+        inicio.setDate(hoy.getDate() - 7)
+        break
+      case "mes":
+        inicio.setMonth(hoy.getMonth() - 1)
+        break
+      case "año":
+        inicio.setFullYear(hoy.getFullYear() - 1)
+        break
+      default:
+        return { inicio: "", fin: "" }
+    }
+
+    return {
+      inicio: inicio.toISOString().split('T')[0],
+      fin: hoy.toISOString().split('T')[0]
+    }
+  }
+
+  const handlePeriodoChange = (periodo: string) => {
+    setPeriodoSeleccionado(periodo)
+    if (periodo !== "personalizado") {
+      const fechas = getPeriodoFechas(periodo)
+      setFechaInicio(fechas.inicio)
+      setFechaFin(fechas.fin)
+    }
+  }
+
+  const handleLimpiarFiltros = async () => {
+    setIsFetching(true)
+    setError(null)
+    setFechaInicio("")
+    setFechaFin("")
+    setPeriodoSeleccionado("personalizado")
+
+    try {
+      // Obtener datos según el tab activo
+      if (activeTab === "gasto-fijo") {
+        const gastosFijosData = await apiService.getGastosFijos()
+        const gastosFijosFormateados: Transaccion[] = gastosFijosData.map((gastoFijo) => ({
+          id: `gasto-fijo-${gastoFijo.id}`,
+          tipo: "gasto",
+          descripcion: gastoFijo.descripcion,
+          cantidad: gastoFijo.cantidad,
+          fecha: gastoFijo.fecha,
+          originalId: gastoFijo.id,
+          esGastoFijo: true,
+          frecuencia: gastoFijo.frecuencia
+        }))
+        setTransacciones(gastosFijosFormateados)
+      } else {
+        // Para otros tabs, cargar todos los datos
+        const [ingresosData, gastosData, gastosFijosData] = await Promise.all([
+          apiService.getIngresos(), 
+          apiService.getGastos(),
+          apiService.getGastosFijos()
+        ])
+
+        const ingresosFormateados: Transaccion[] = ingresosData.map((ingreso) => ({
+          id: `ingreso-${ingreso.id}`,
+          tipo: "ingreso",
+          descripcion: ingreso.descripcion || '',
+          cantidad: ingreso.cantidad,
+          fecha: ingreso.fecha,
+          originalId: ingreso.id,
+          esGastoFijo: false,
+        }))
+
+        const gastosFormateados: Transaccion[] = gastosData.map((gasto) => ({
+          id: `gasto-${gasto.id}`,
+          tipo: "gasto",
+          descripcion: gasto.descripcion,
+          cantidad: gasto.cantidad,
+          fecha: gasto.fecha,
+          originalId: gasto.id,
+          esGastoFijo: false,
+        }))
+
+        const gastosFijosFormateados: Transaccion[] = gastosFijosData.map((gastoFijo) => ({
+          id: `gasto-fijo-${gastoFijo.id}`,
+          tipo: "gasto",
+          descripcion: gastoFijo.descripcion,
+          cantidad: gastoFijo.cantidad,
+          fecha: gastoFijo.fecha,
+          originalId: gastoFijo.id,
+          esGastoFijo: true,
+          frecuencia: gastoFijo.frecuencia
+        }))
+
+        // Combinar y ordenar por fecha (más reciente primero)
+        const todasTransacciones = [...ingresosFormateados, ...gastosFormateados, ...gastosFijosFormateados].sort(
+          (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+        )
+
+        setTransacciones(todasTransacciones)
+      }
+    } catch (err) {
+      console.error("Error al cargar datos:", err)
+      setError("No se pudieron cargar los datos. Intente nuevamente.")
+    } finally {
+      setIsFetching(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -752,11 +946,83 @@ export default function IngresosGastosPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <Button variant="outline" size="icon">
-              <Filter className="h-4 w-4" />
-              <span className="sr-only">Filtrar</span>
-            </Button>
-
+            <Dialog open={isFilterDialogOpen} onOpenChange={setIsFilterDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Filter className="h-4 w-4" />
+                  <span className="sr-only">Filtrar</span>
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Filtrar por Fecha</DialogTitle>
+                  <DialogDescription>Selecciona el rango de fechas para filtrar las transacciones</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label>Período</Label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={periodoSeleccionado}
+                      onChange={(e) => handlePeriodoChange(e.target.value)}
+                    >
+                      <option value="personalizado">Personalizado</option>
+                      <option value="semana">Última semana</option>
+                      <option value="mes">Último mes</option>
+                      <option value="año">Último año</option>
+                    </select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="fecha-inicio">Fecha Inicio</Label>
+                    <Input
+                      id="fecha-inicio"
+                      type="date"
+                      value={fechaInicio}
+                      onChange={(e) => {
+                        setFechaInicio(e.target.value)
+                        setPeriodoSeleccionado("personalizado")
+                      }}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="fecha-fin">Fecha Fin</Label>
+                    <Input
+                      id="fecha-fin"
+                      type="date"
+                      value={fechaFin}
+                      onChange={(e) => {
+                        setFechaFin(e.target.value)
+                        setPeriodoSeleccionado("personalizado")
+                      }}
+                    />
+                  </div>
+                </div>
+                <DialogFooter className="flex justify-between">
+                  <Button
+                    variant="outline"
+                    onClick={handleLimpiarFiltros}
+                  >
+                    Limpiar Filtros
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsFilterDialogOpen(false)
+                        setFechaInicio("")
+                        setFechaFin("")
+                        setPeriodoSeleccionado("personalizado")
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleFilter} disabled={!fechaInicio || !fechaFin}>
+                      {isFetching ? "Filtrando..." : "Aplicar Filtro"}
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
